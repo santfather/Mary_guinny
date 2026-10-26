@@ -1,0 +1,22 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Локальный рантайм: копия ComfyUI (~2.3 GB) со своим .git
+runtime/
+
+# Пользовательские ассеты и результаты рендера — вне Git (DECISIONS.md, D3)
+characters/**/*.png
+characters/**/*.jpg
+characters/**/*.jpeg
+episodes/**/*.mp4
+episodes/**/*.png
+episodes/**/*.wav
+episodes/**/*.mp3
+comfyui-input/**
+!comfyui-input/**/.gitkeep
+exports/*
+!exports/.gitkeep

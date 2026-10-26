@@ -1,0 +1,12 @@
+ПЕРСОНАЖ: МАРИЯ (хозяйка)
+
+Стиль:             2D мультфильм, тот же арт-стиль, что и кот (мягкие линии, пастельные цвета)
+Волосы (с фото):   Яркие, огненно-рыжие, очень пышные и мелко кудрявые, распущенные (каре)
+Одежда дома (с фото): Серая меланжевая толстовка на молнии с капюшоном, белый гольф с высоким воротом, синие джинсы
+Глаза (с фото):    Карие, широко открытые, выражающие энтузиазм
+Характерная деталь: Всегда с телефоном (в чехле с котиком) или термокружкой кофе, часто держит руки в карманах
+Голос (ElevenLabs): Живой, энергичный, быстрый, немного рассеянный
+Характер:          Энергичная, заботливая, слегка хаотичная. Всегда придумывает грандиозные планы и идеи для активности, которые кот Гиннесс успешно игнорирует.
+
+Промпт для генерации:
+A full body 2D cartoon still of a young woman, inspired by PXL_20260609_124742389.PORTRAIT.ORIGINAL.jpg, with soft lines and a pastel color palette. She has vibrant, voluminous, fiery-red curly hair styled in a messy bob. She is wearing the specific gray zippered hoodie, white turtleneck, and blue jeans seen in PXL_20260609_124742389.PORTRAIT.ORIGINAL.jpg. Her hands are in her pockets. Her expression is energetic with wide, enthusiastic hazel eyes. The art style is gentle and hand-drawn, in the same consistent universe as the Burmese cat.

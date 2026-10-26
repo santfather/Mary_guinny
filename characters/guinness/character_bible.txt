@@ -1,0 +1,14 @@
+ПЕРСОНАЖ: ГИННЕСС (кот)
+
+Стиль:             2D мультфильм, мягкие линии, пастельные цвета
+Окрас (с фото):    Глубокий, бархатистый темно-коричневый (соболиный) окрас бурманской породы
+Глаза (с фото):    Желто-зеленые, "золотые", постоянно немного прищуренные
+Телосложение:      Плотное, компактное, мускулистое, но приземистое
+Характерная деталь: Всегда чуть-чуть недовольное, скептическое выражение мордочки
+Ошейник:           Темно-синий бархатный с плоской серебряной бляшкой в форме рыбьего скелета
+Голос (ElevenLabs): Низкий, ленивый, чуть хриплый, с растягиванием гласных
+Характер:          Ленивый философ, саркастичный, любит премиум-еду и сон в самых неожиданных местах. 
+                   Говорит короткими фразами, иногда философски. Считает себя хозяином дома.
+
+Промпт для генерации:
+A full body 2D cartoon still of a Burmese cat, inspired by _DSC4643.jpg, with soft lines and a pastel color palette. The cat has a rich, velvety dark-sable brown coat and squinted, gold-green eyes with a slightly grumpy, cynical expression. The body is compact, sturdy, and plump. It is wearing a dark blue velvet collar with a flat silver fish-skeleton tag. The overall art style is gentle and hand-drawn.

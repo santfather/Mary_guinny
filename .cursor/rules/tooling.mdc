@@ -1,0 +1,29 @@
+---
+description: "Tooling & dev environment conventions (uv, mise, OrbStack, Bruno)"
+alwaysApply: true
+---
+
+# Tooling & Dev Environment
+
+## Python — менеджер пакетов: uv
+- Единственный разрешённый менеджер пакетов — **uv**.
+- Добавить зависимость: `uv add <package>`
+- Запустить скрипт: `uv run <script>`
+- **Нельзя** использовать `pip install` или `poetry add` напрямую.
+- `pyproject.toml` + `uv.lock` — источник истины для зависимостей.
+
+## Версии рантаймов — mise
+- Версии Node, Python и других рантаймов фиксируются в `mise.toml`.
+- Установить нужную версию: `mise install`
+- Node ставится через mise, **не через nvm / volta / fnm**.
+- При создании нового проекта — добавить `mise.toml` с нужными версиями.
+
+## Контейнеры — OrbStack
+- Контейнеры запускаются через **OrbStack** (не Docker Desktop).
+- CLI-команды `docker` и `docker compose` работают без изменений.
+- Не менять синтаксис docker-compose файлов — OrbStack их поддерживает нативно.
+
+## API-тесты — Bruno
+- API-тесты пишутся как Bruno-коллекции (`.bru` файлы) в папке `api/`.
+- **Не использовать Postman**. Bruno-файлы коммитятся в репозиторий.
+- Переменные окружения — в `api/environments/`.

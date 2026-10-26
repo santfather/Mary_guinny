@@ -1,0 +1,13 @@
+{
+  "name": "scene_draft_ipadapter",
+  "description": "Черновик сцены: ключевой кадр через IP-Adapter + ffmpeg → mp4",
+  "template": "scene_draft_ipadapter.api.json",
+  "fallback_for": "scene_draft_ltx",
+  "note": "LTX-Video требует отдельную модель. Этот workflow генерирует keyframe и собирает 5-сек mp4.",
+  "defaults": {
+    "WIDTH": 768,
+    "HEIGHT": 512,
+    "DURATION_SEC": 5,
+    "FPS": 24
+  }
+}

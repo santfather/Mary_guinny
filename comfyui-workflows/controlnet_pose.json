@@ -1,0 +1,8 @@
+{
+  "name": "controlnet_pose",
+  "description": "OpenPose ControlNet для фиксации позы (вспомогательный workflow)",
+  "template": "character_pose_openpose.api.json",
+  "requires_nodes": ["comfyui_controlnet_aux"],
+  "pose_skeletons_dir": "comfyui-input/poses",
+  "note": "Положите PNG-скелеты поз в comfyui-input/poses/{pose_name}.png"
+}

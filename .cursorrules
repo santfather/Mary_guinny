@@ -1,0 +1,85 @@
+# Cursor Rules — AI Development Workspace
+
+## Knowledge Base
+This project has a curated knowledge base of 656 AI/LLM repositories.
+File: @AI_Tools_Analysis.md
+
+**Always check @AI_Tools_Analysis.md before suggesting any library or tool.**
+Prefer tools from the "🚀 Рекомендации по интеграции" section.
+When recommending a tool, mention its star count from the knowledge base.
+
+---
+
+## Tool Selection Rules
+
+### Web Scraping
+- Use **firecrawl** or **Scrapling** — both in knowledge base, proven solutions
+- Avoid rolling custom scrapers when these exist
+
+### Memory / Persistence
+- Use **mem0** for agent memory (⭐59k, universal layer)
+- Use **claude-mem** for session persistence across Claude Code runs
+
+### Context Management
+- Use **headroom** to compress context before LLM calls (saves 60-95% tokens)
+- Use **context7** MCP server for up-to-date library docs
+
+### LLM API
+- Use **litellm** as gateway — avoids vendor lock-in, supports 100+ providers
+
+### Agent Frameworks
+- **langchain** for RAG and chains
+- **crewAI** for multi-agent role orchestration
+- **autogen** for agentic AI pipelines
+
+### Document Processing
+- **markitdown** (Microsoft) for any file → Markdown conversion
+- **MinerU** for PDF/Office → LLM-ready JSON
+
+---
+
+## Code Style
+
+### Python
+- Always use `async/await` for I/O operations
+- Add type hints to all function signatures
+- Use `python-dotenv` for environment variables — never hardcode secrets
+- Defensive None handling: `repo.get('field') or default_value`
+- Create directories before writing: `os.makedirs('path', exist_ok=True)`
+
+### Testing
+- Use `pytest` + `pytest-asyncio` for all async tests
+- Mock external calls with `unittest.mock.AsyncMock`
+- Include at least: happy path + None/empty edge case
+
+### Dependencies
+- Check `AI_Tools_Analysis.md` for battle-tested alternatives before adding new deps
+- Prefer packages with >10k GitHub stars
+- Add all new deps to `requirements.txt`
+
+---
+
+## Project Context
+
+**Mary_Guiness** — AI video show pipeline (Marija + Guinness cartoon characters).
+
+Stack: Python async, httpx, litellm, python-dotenv, pytest-asyncio
+Entry: `python main.py run --episode ep01 --stage script --prompt "..."`
+
+Pipeline stages (phased):
+  Phase 1 LOCAL (default): character_refs → script → scene_draft
+  Phase 2 CLOUD (later):   final_video → voices → lipsync → music → assembly
+
+Local tools: Ollama (catshow), ComfyUI (IP-Adapter, ControlNet, LTX-Video)
+Cloud tools: Grok, Kling, ElevenLabs, Hedra, Suno — only after local draft is ready
+
+Key docs: `scenario.md`, `characters/*/character_bible.txt`
+
+---
+
+## Response Format
+
+- Be concise — no fluff
+- When suggesting a tool, always link to its GitHub URL
+- When writing code, write the complete file — no truncation with "rest stays the same"
+- Prefer showing diffs for small changes, full files for new files

@@ -1,0 +1,4 @@
+Character reference: {character_description}
+Keep the character's face, fur pattern, collar and overall appearance consistent.
+{scene_action}
+Animated cartoon style, 2D illustration, soft lines, pastel colors, consistent lighting throughout.

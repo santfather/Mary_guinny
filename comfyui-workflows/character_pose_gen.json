@@ -1,0 +1,32 @@
+{
+  "name": "character_pose_gen",
+  "description": "Генерация референсных поз персонажа (Mary_Guiness)",
+  "templates": {
+    "txt2img": "character_pose_gen.api.json",
+    "openpose": "character_pose_openpose.api.json",
+    "ipadapter": "character_pose_ipadapter.api.json"
+  },
+  "selection_rules": {
+    "reference_front": "txt2img",
+    "default_with_anchor": "ipadapter",
+    "with_pose_skeleton": "openpose"
+  },
+  "variables": [
+    "CHECKPOINT",
+    "POSITIVE_PROMPT",
+    "NEGATIVE_PROMPT",
+    "POSE_IMAGE",
+    "REFERENCE_IMAGE",
+    "OUTPUT_PREFIX",
+    "SEED",
+    "WIDTH",
+    "HEIGHT",
+    "STEPS",
+    "CFG",
+    "SAMPLER",
+    "SCHEDULER",
+    "CONTROLNET",
+    "CONTROLNET_STRENGTH",
+    "IPADAPTER_WEIGHT"
+  ]
+}

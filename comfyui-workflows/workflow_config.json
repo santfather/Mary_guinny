@@ -1,0 +1,29 @@
+{
+  "checkpoint": "dreamshaper_8.safetensors",
+  "checkpoint_sdxl": "dreamshaper_8.safetensors",
+  "controlnet_openpose_sd15": "control_v11p_sd15_openpose.pth",
+  "controlnet_openpose_sdxl": "controlnet-openpose-sdxl.safetensors",
+  "ipadapter_plus_sd15": "ip-adapter-plus_sd15.safetensors",
+  "clip_vision_sd15": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+  "ipadapter_weight": 0.75,
+  "controlnet_strength": 0.85,
+  "width": 512,
+  "height": 768,
+  "scene_width": 768,
+  "scene_height": 512,
+  "scene_duration_sec": 5,
+  "scene_fps": 24,
+  "steps": 28,
+  "cfg": 7.5,
+  "sampler": "dpmpp_2m",
+  "scheduler": "karras",
+  "negative_prompt": "photorealistic, realistic photo, 3d render, human, person, man, woman, blurry, low quality, watermark, text, deformed, extra limbs, bad anatomy, dark shadows, harsh lighting, anime screenshot",
+  "required_custom_nodes": [
+    "ComfyUI_IPAdapter_plus",
+    "comfyui_controlnet_aux",
+    "ComfyUI-VideoHelperSuite",
+    "ComfyUI-AnimateDiff-Evolved",
+    "ComfyUI-LTXVideo"
+  ],
+  "ltx_checkpoint": "ltxv-13b-0.9.8-dev-fp8.safetensors"
+}

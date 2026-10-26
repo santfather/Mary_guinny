@@ -1,0 +1,43 @@
+{
+  "reference_front": {
+    "label": "анфас, нейтральная поза",
+    "pose_prompt": "standing front view, neutral pose, facing camera, full body",
+    "use_ipadapter": false
+  },
+  "reference_side": {
+    "label": "профиль",
+    "pose_prompt": "standing side view, profile, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  },
+  "reference_3q": {
+    "label": "3/4 поворот",
+    "pose_prompt": "standing three-quarter view, slight angle, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  },
+  "reference_sit": {
+    "label": "сидит",
+    "pose_prompt": "sitting pose, relaxed, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  },
+  "reference_walk": {
+    "label": "идёт",
+    "pose_prompt": "walking pose, mid-step, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  },
+  "reference_surprised": {
+    "label": "удивлён",
+    "pose_prompt": "surprised expression, standing, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  },
+  "reference_sleep": {
+    "label": "спит",
+    "pose_prompt": "sleeping pose, curled up, peaceful, full body",
+    "use_ipadapter": true,
+    "anchor_pose": "reference_front"
+  }
+}
