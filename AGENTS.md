@@ -103,5 +103,7 @@
 - WP-00B выполнен: git инициализирован, ветка `main`, remote `git@github.com:santfather/Mary_guinny.git`.
 - WP-00C выполнен: 15 passed.
 - WP-00A выполнен: I2V API-workflow `comfyui-workflows/ltx23_mlx_q4_i2v.api.json`, один прогон 512×512/73/24.
-- Backend, frontend, worker, БД и миграции отсутствуют.
-- Тесты: 15 passed.
+- WP-01 выполнен: `backend/` (FastAPI, SQLAlchemy 2, Alembic), миграция `0001_initial_core`
+  — 11 таблиц §4.1 v1.3 с S10/S11/S12; `GET /health` → 200.
+- Frontend, worker и логика очереди отсутствуют.
+- Тесты: legacy — 15 passed; backend — 7 passed.

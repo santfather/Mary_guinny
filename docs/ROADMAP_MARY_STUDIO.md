@@ -173,6 +173,13 @@
 будут зависеть от несуществующих таблиц. Поэтому каркас таблиц создаётся сразу, а
 поведение очереди остаётся за WP-06.
 
+**Состояние:** выполнен 2026-10-26. `backend/` на FastAPI + SQLAlchemy 2 + Alembic (uv,
+`backend/uv.lock`), миграция `0001_initial_core` — 11 таблиц §4.1 v1.3 с S10/S11/S12;
+эндпоинты `/health` и `/api/health`. Проверки: `uv run pytest -q` → 7 passed;
+`alembic upgrade head` / `downgrade base` / `upgrade head` на локальном PostgreSQL 16.14;
+`alembic check` → «No new upgrade operations detected»; legacy `pytest` → 15 passed.
+`pipeline/` не изменён.
+
 **Зависит:** WP-00, WP-00B (git), решение по uv; утверждение S10/S11/S12 для
 соответствующих колонок.
 **DoD:** `GET /health` → 200; `alembic upgrade head` и `downgrade base` проходят;
