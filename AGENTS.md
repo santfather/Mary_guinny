@@ -100,7 +100,7 @@
 ## 8. Текущее состояние (на 2026-10-26)
 
 - WP-00 выполнен: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ENV-AUDIT.md`, `AGENTS.md`.
+- WP-00B выполнен: git инициализирован, ветка `main`, remote `git@github.com:santfather/Mary_guinny.git`.
 - Backend, frontend, worker, БД и миграции отсутствуют.
-- Репозиторий не инициализирован в git (WP-00B не начат).
 - Тесты: 14 passed, 1 failed (WP-00C).
 - Реальный I2V API-workflow не зафиксирован (WP-00A).
