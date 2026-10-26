@@ -128,7 +128,12 @@
   `app/api/scene_plans.py` (list/create/get/put/generate/approve/supersede/composition),
   `POST /api/projects/{id}/references`, `layout mockup` и экспорт 512×512 `crop`/`pad`;
   UI — `ScenePlanPanel.tsx`, `ScenePlanEditor.tsx`, `ReferencePicker.tsx`.
-- Очередь и worker отсутствуют: render-job только ставится в `pending` (WP-06).
+- WP-06 выполнен: миграция `0006_events` (журнал `events`, `sequence`, CHECK,
+  `uq_events_job_sequence`), `app/api/worker.py` (claim `FOR UPDATE SKIP LOCKED`,
+  heartbeat, artifacts с sha256 и проверкой MP4, complete, fail с `retry_wait`,
+  resume; обязательный токен), `app/api/jobs.py`, `app/video_probe.py`,
+  `Idempotency-Key` в `POST /api/shots/{id}/render`, `worker/fake_worker.py`
+  (ffmpeg → валидный MP4). `lease_expired` не перезапускается автоматически.
 - WP-05B (multi-reference video PoC) не начат: LTX в WP-05A не запускался.
-- Тесты: legacy — 15 passed; backend — 123 passed; `alembic check` — no new operations;
+- Тесты: legacy — 15 passed; backend — 137 passed; `alembic check` — no new operations;
   UI — `npm run build`.

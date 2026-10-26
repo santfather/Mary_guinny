@@ -1,7 +1,8 @@
 # Roadmap Mary Studio
 
 > **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02,
-> WP-03, WP-04, WP-05 и WP-05A выполнены (2026-10-26); WP-05B и WP-06 и далее не начаты.
+> WP-03, WP-04, WP-05, WP-05A и WP-06 выполнены (2026-10-26); WP-05B и WP-07 и далее
+> не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
 > **Принцип:** маленькие проверяемые пакеты; каждый следующий начинается только после
@@ -468,6 +469,25 @@ matting/изменении canvas оформлено предложением.
 **Проверка:** `pytest backend/tests/test_queue.py`, `pytest worker/tests`,
 `ffprobe` на результате FakeWorker.
 **Не делать:** реальный ComfyUI.
+
+**Состояние:** выполнен 2026-10-26. Backend: миграция `0006_events` (таблица `events`:
+`sequence`, CHECK `event`/`progress`/`target`, частичный уникальный индекс
+`uq_events_job_sequence`); `app/api/worker.py` — `claim` (`FOR UPDATE SKIP LOCKED`,
+порядок priority/created_at, гонка двух воркеров), `heartbeat` (`leased → running`,
+продление lease), `artifacts` (sha256 + структурная проверка MP4), `complete`,
+`fail` (`retry_wait` с backoff или `failed`), `resume`; токен обязателен
+(`Authorization: Bearer` или `X-Worker-Token`, иначе 401; пустой токен — 503);
+просроченный lease переводится в `lease_expired` без автоперезапуска. `app/api/jobs.py`
+— `GET /api/jobs`, `GET /api/jobs/{id}`. `app/video_probe.py` — разбор ISO BMFF
+(`ftyp`, `moov`, `mvhd`, `hdlr`) без внешних зависимостей. `queue_render` принимает
+`Idempotency-Key`: повтор возвращает тот же job, чужой шот — 409. `worker/fake_worker.py`
+— stdlib-клиент протокола и ffmpeg (libx264, yuv420p, `+faststart`), флаги `--once`,
+`--poll`, `--delay`, `--fail`, `--crash-after-claim`.
+Проверки: `uv run pytest -q` → 137 passed (включая `tests/test_queue.py` и
+`tests/test_fake_worker.py`); legacy → 15 passed; `alembic check` — no new upgrade
+operations; `npm run build` — успешно; `ffprobe` на MP4 FakeWorker — валидный
+h264-файл заданной длительности.
+**Открыто:** SSE, публичный API рендера и отмена — WP-07; реальный ComfyUI/LTX — WP-08.
 
 ---
 

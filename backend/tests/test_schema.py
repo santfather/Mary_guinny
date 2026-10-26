@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "shot_compositions",
     "shot_composition_layers",
     "visual_scene_plans",
+    "events",
 }
 
 
@@ -59,3 +60,13 @@ def test_render_attempts_job_required_rule() -> None:
     check_names = {c.name for c in attempts.constraints if c.name}
 
     assert "ck_render_attempts_job_required" in check_names
+
+
+def test_events_sequence_and_target_rules() -> None:
+    events = Base.metadata.tables["events"]
+    check_names = {c.name for c in events.constraints if c.name}
+    index_names = {i.name for i in events.indexes}
+
+    assert "ck_events_target" in check_names
+    assert "ck_events_progress_range" in check_names
+    assert "uq_events_job_sequence" in index_names

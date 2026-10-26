@@ -29,3 +29,8 @@ class Settings(BaseSettings):
     planner_timeout_s: float = 120.0
     planner_max_images: int = 3
     planner_image_max_side: int = 768
+    # WP-06: worker API. Токен обязателен (D7); пустое значение отключает API.
+    worker_token: str = "change-me"
+    worker_lease_seconds: int = 60
+    worker_retry_backoff_s: int = 5
+    worker_max_artifact_bytes: int = 256 * 1024 * 1024

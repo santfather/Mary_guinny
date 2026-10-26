@@ -4,7 +4,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -522,17 +522,46 @@ def promote_keyframe(
     return ShotSummary.from_shot(shot, project_id)
 
 
+def _queued_out(job: Job, shot: Shot) -> RenderQueuedOut:
+    payload = job.payload or {}
+    raw = payload.get("start_keyframe_artifact_id")
+    artifact_id = uuid.UUID(str(raw)) if raw else shot.start_keyframe_artifact_id
+    return RenderQueuedOut(
+        job_id=job.id,
+        status=job.status,
+        shot_id=shot.id,
+        start_keyframe_artifact_id=artifact_id,
+    )
+
+
 @router.post(
     "/shots/{shot_id}/render",
     response_model=RenderQueuedOut,
     status_code=status.HTTP_202_ACCEPTED,
 )
 def queue_render(
-    shot_id: uuid.UUID, session: Session = Depends(get_session)
+    shot_id: uuid.UUID,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    session: Session = Depends(get_session),
 ) -> RenderQueuedOut:
     shot = require_shot(session, shot_id)
     if shot.start_keyframe_artifact_id is None:
         raise HTTPException(status_code=409, detail="start keyframe is not approved")
+
+    key: str | None = None
+    if idempotency_key is not None:
+        key = idempotency_key.strip()
+        if not key or len(key) > 200:
+            raise HTTPException(
+                status_code=422, detail="Idempotency-Key must be 1..200 characters"
+            )
+        existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+        if existing is not None:
+            if existing.shot_id != shot.id:
+                raise HTTPException(
+                    status_code=409, detail="idempotency key belongs to another shot"
+                )
+            return _queued_out(existing, shot)
 
     active = session.scalar(
         select(Job).where(
@@ -551,6 +580,7 @@ def queue_render(
         kind="render_video",
         shot_id=shot.id,
         status="pending",
+        idempotency_key=key,
         payload={
             "shot_id": str(shot.id),
             "start_keyframe_artifact_id": str(shot.start_keyframe_artifact_id),
@@ -562,13 +592,12 @@ def queue_render(
         session.commit()
     except IntegrityError as error:
         session.rollback()
+        if key is not None:
+            existing = session.scalar(select(Job).where(Job.idempotency_key == key))
+            if existing is not None and existing.shot_id == shot.id:
+                return _queued_out(existing, shot)
         raise HTTPException(
             status_code=409, detail="render is already queued for this shot"
         ) from error
     session.refresh(job)
-    return RenderQueuedOut(
-        job_id=job.id,
-        status=job.status,
-        shot_id=shot.id,
-        start_keyframe_artifact_id=shot.start_keyframe_artifact_id,
-    )
+    return _queued_out(job, shot)

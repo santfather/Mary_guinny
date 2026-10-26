@@ -67,6 +67,15 @@ SHOT_REFERENCE_PURPOSES = ("character", "location", "prop", "style", "other")
 COMPOSITION_STATUSES = ("draft", "approved", "superseded")
 VISUAL_PLAN_STATUSES = ("draft", "approved", "superseded")
 VISUAL_PLAN_SOURCES = ("manual", "llm", "fallback")
+EVENT_NAMES = (
+    "claimed",
+    "progress",
+    "artifact_uploaded",
+    "completed",
+    "failed",
+    "lease_expired",
+    "resumed",
+)
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -324,6 +333,53 @@ class RenderAttempt(Base):
     duration_s: Mapped[Decimal | None] = mapped_column(Numeric(10, 3))
     peak_mem_mb: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Event(Base):
+    """Журнал событий job/attempt (WP-06).
+
+    Источник истины о статусе остаётся в `jobs`; журнал нужен для истории,
+    SSE (WP-07) и разбора инцидентов. `sequence` упорядочивает события job.
+    """
+
+    __tablename__ = "events"
+    __table_args__ = (
+        CheckConstraint(_in_list("event", EVENT_NAMES), name="ck_events_event"),
+        CheckConstraint("sequence >= 1", name="ck_events_sequence_positive"),
+        CheckConstraint(
+            "job_id IS NOT NULL OR attempt_id IS NOT NULL", name="ck_events_target"
+        ),
+        CheckConstraint(
+            "progress IS NULL OR (progress >= 0 AND progress <= 1)",
+            name="ck_events_progress_range",
+        ),
+        Index(
+            "uq_events_job_sequence",
+            "job_id",
+            "sequence",
+            unique=True,
+            postgresql_where=text("job_id IS NOT NULL"),
+        ),
+        Index("ix_events_attempt_id", "attempt_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id")
+    )
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("render_attempts.id")
+    )
+    event: Mapped[str] = mapped_column(Text, nullable=False)
+    stage: Mapped[str | None] = mapped_column(Text)
+    progress: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
