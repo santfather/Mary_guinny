@@ -117,5 +117,10 @@
   `locations`, `props`, approve/reject) и data-fix CLI `python -m app.set_character_kinds`;
   UI `ui/` (React 19 + TypeScript + Vite) — список персонажей, bible, сетка референсов,
   фильтры, лайтбокс, approve/reject, каталоги локаций и предметов.
-- Worker и логика очереди отсутствуют; frontend — только библиотека (WP-04).
-- Тесты: legacy — 15 passed; backend — 67 passed; UI — `npm run build`.
+- WP-05 выполнен: `app/composer.py` (Pillow, RGBA, предупреждения о непрозрачных слоях),
+  API сцен/шотов/`shot_references`/ревизий композиции, `keyframe` + `promote-keyframe`,
+  render-гейт (`POST /api/shots/{id}/render` → pending job); UI `#/shots` и
+  `#/shots/{id}` — шоты, референсы, редактор слоёв, render/approve/supersede, стартовый
+  кадр. Схема БД не менялась.
+- Очередь и worker отсутствуют: render-job только ставится в `pending` (WP-06).
+- Тесты: legacy — 15 passed; backend — 81 passed; UI — `npm run build`.

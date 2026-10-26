@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.storage import BlobStore
 
 
@@ -18,3 +19,7 @@ def get_session(request: Request) -> Iterator[Session]:
 
 def get_store(request: Request) -> BlobStore:
     return BlobStore(request.app.state.settings.storage_root)
+
+
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings

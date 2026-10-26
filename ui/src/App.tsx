@@ -10,6 +10,8 @@ import { CharacterDetailPage } from "./pages/CharacterDetailPage";
 import { CharacterListPage } from "./pages/CharacterListPage";
 import { LocationsPage } from "./pages/LocationsPage";
 import { PropsPage } from "./pages/PropsPage";
+import { ShotDetailPage } from "./pages/ShotDetailPage";
+import { ShotsPage } from "./pages/ShotsPage";
 
 function preferredProject(projects: Project[]): Project | null {
   return projects.find((project) => project.title === "Mary Studio") ?? projects[0] ?? null;
@@ -23,10 +25,14 @@ export function App() {
   const list = projects.state.status === "ready" ? projects.state.data : [];
   const active = list.find((project) => project.id === selectedId) ?? preferredProject(list);
   const inCharacters = route.name === "characters" || route.name === "character";
+  const inShots = route.name === "shots" || route.name === "shot";
 
   function renderContent() {
     if (route.name === "character") {
       return <CharacterDetailPage characterId={route.id} />;
+    }
+    if (route.name === "shot") {
+      return <ShotDetailPage shotId={route.id} />;
     }
     if (projects.state.status === "loading") {
       return <StateView kind="loading" title="Загрузка проектов" />;
@@ -56,8 +62,13 @@ export function App() {
     if (route.name === "props") {
       return <PropsPage projectId={active.id} />;
     }
+    if (route.name === "shots") {
+      return <ShotsPage projectId={active.id} />;
+    }
     return <CharacterListPage projectId={active.id} />;
   }
+
+  const showProjectPicker = !inCharacters && !inShots;
 
   return (
     <div className="app">
@@ -85,8 +96,14 @@ export function App() {
           >
             Предметы
           </a>
+          <a
+            href="#/shots"
+            className={inShots ? "nav__link nav__link--active" : "nav__link"}
+          >
+            Шоты
+          </a>
         </nav>
-        {route.name !== "character" && list.length > 1 && active !== null && (
+        {showProjectPicker && list.length > 1 && active !== null && (
           <label className="field field--inline">
             <span>Проект</span>
             <select

@@ -30,6 +30,29 @@ const KIND_LABELS: Record<string, string> = {
   other: "Другое",
 };
 
+const PURPOSE_LABELS: Record<string, string> = {
+  character: "персонаж",
+  location: "локация",
+  prop: "предмет",
+  style: "стиль",
+  other: "другое",
+};
+
+const REFERENCE_KIND_LABELS: Record<string, string> = {
+  character_reference: "персонаж",
+  location_reference: "локация",
+  prop_reference: "предмет",
+  uploaded: "загружен",
+};
+
+export function purposeLabel(purpose: string): string {
+  return PURPOSE_LABELS[purpose] ?? purpose;
+}
+
+export function referenceKindLabel(kind: string): string {
+  return REFERENCE_KIND_LABELS[kind] ?? kind;
+}
+
 export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status;
 }

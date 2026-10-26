@@ -76,3 +76,109 @@ export interface ReferenceFilters {
   view: string;
   pose: string;
 }
+
+export interface ShotSummary {
+  id: string;
+  scene_id: string;
+  project_id: string;
+  sequence_no: number;
+  status: string;
+  target_duration_frames: number | null;
+  timeline_fps: number | null;
+  start_keyframe_artifact_id: string | null;
+  start_keyframe_attempt_id: string | null;
+  start_keyframe_content_url: string | null;
+}
+
+export interface SceneSummary {
+  id: string;
+  project_id: string;
+  episode_id: string | null;
+  sequence_no: number;
+  title: string | null;
+  shots: ShotSummary[];
+}
+
+export interface ShotReference {
+  id: string;
+  purpose: string;
+  reference: ReferenceAsset;
+}
+
+export interface CompositionLayerInput {
+  reference_asset_id: string;
+  z_index: number;
+  x: number;
+  y: number;
+  scale: number;
+  rotation: number;
+  opacity: number;
+}
+
+export interface CompositionLayer extends CompositionLayerInput {
+  reference: ReferenceAsset;
+}
+
+export interface CompositionSummary {
+  revision: number;
+  width: number;
+  height: number;
+  status: string;
+  layer_count: number;
+  preview_artifact_id: string | null;
+  preview_content_url: string | null;
+  created_at: string;
+  approved_at: string | null;
+}
+
+export interface Composition extends CompositionSummary {
+  layers: CompositionLayer[];
+}
+
+export interface CompositionWarning {
+  code: string;
+  message: string;
+  z_index: number;
+  reference_asset_id: string;
+}
+
+export interface CompositionRender {
+  artifact_id: string;
+  content_url: string;
+  width: number;
+  height: number;
+  preview_artifact_id: string | null;
+  warnings: CompositionWarning[];
+}
+
+export interface Attempt {
+  id: string;
+  kind: string;
+  status: string;
+  job_id: string | null;
+  created_at: string;
+  artifact_id: string | null;
+  artifact_content_url: string | null;
+  composition_revision: number | null;
+}
+
+export interface KeyframeResult {
+  attempt_id: string;
+  artifact_id: string;
+  artifact_content_url: string;
+  composition_revision: number;
+  status: string;
+}
+
+export interface RenderQueued {
+  job_id: string;
+  status: string;
+  shot_id: string;
+  start_keyframe_artifact_id: string;
+}
+
+export interface ShotDetail extends ShotSummary {
+  references: ShotReference[];
+  composition_revisions: CompositionSummary[];
+  attempts: Attempt[];
+}

@@ -17,3 +17,6 @@ class Settings(BaseSettings):
     storage_root: Path = REPO_ROOT / "storage"
     # Корень legacy-дерева (characters/, episodes/) для импорта (WP-03).
     legacy_root: Path = REPO_ROOT
+    # D2: лимиты синхронного композитора PNG (WP-05).
+    composition_max_pixels: int = 16 * 1024 * 1024
+    composition_max_layers: int = 16

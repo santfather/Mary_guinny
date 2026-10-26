@@ -339,6 +339,26 @@ sha256 34 исходных файлов до/после импорта иден�
 **Не делать:** тени, сегментация, pose-control, автоматический подбор поз,
 автоматический approve композиции или кадра.
 
+**Состояние:** выполнен 2026-10-26. Backend: `app/composer.py` (Pillow; RGBA-холст,
+`scale` → `rotation` → `opacity`, клип по холсту, предупреждения
+`opaque_character_reference`/`layer_without_alpha`, лимиты `composition_max_pixels`/
+`composition_max_layers`); `app/api/shot_schemas.py`, `app/api/shots.py` (сцены, шоты,
+`shot_references`, `keyframe`, `promote-keyframe`, render-гейт), `app/api/compositions.py`
+(ревизии, правка только `draft`, render, approve, явный `supersede`),
+`GET /api/projects/{id}/references` для пикера слоёв. В слой допускаются только
+`approved` или `uploaded`; `POST /api/shots/{id}/keyframe` требует approved-ревизию с
+предпросмотром; без подтверждённого стартового кадра `POST /api/shots/{id}/render`
+отклоняется 409; с кадром создаётся `jobs(status='pending', kind='render_video')` без
+lease/heartbeat (они в WP-06). UI: `#/shots` и `#/shots/{id}` — сцены и шоты, привязка
+референсов, редактор слоёв (`z`, `x`, `y`, `scale`, `rotation`, `opacity`), предпросмотр
+с предупреждениями, approve/supersede, keyframe → promote, постановка рендера.
+Схема БД не менялась, миграций нет.
+Проверки: `uv run pytest -q` → 81 passed; legacy `pytest` → 15 passed;
+`uv run alembic check` — no new upgrade operations; `npm run build` — успешно. Ручной
+сценарий в браузере: сцена → шот → привязка approved-референса → ревизия 512×768 →
+render (PNG) → approve → keyframe → promote (стартовый кадр подтверждён) → повторный
+рендер шота отклонён с `render_already_active`; ошибок консоли и 5xx нет.
+
 ---
 
 ### WP-06. Очередь и FakeWorker

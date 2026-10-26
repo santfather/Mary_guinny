@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import uuid
 from collections.abc import Callable, Iterator
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image, PngImagePlugin
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ from app.api.deps import get_session
 from app.config import Settings
 from app.db import build_engine
 from app.main import create_app
+from app.storage import BlobStore
 
 
 @pytest.fixture(scope="session")
@@ -190,6 +193,8 @@ def make_reference(conn: Connection) -> Callable[..., uuid.UUID]:
         storage_key: str | None = None,
         sha256: str | None = None,
         metadata: dict[str, object] | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> uuid.UUID:
         if character_id is not None:
             kind = "character_reference"
@@ -206,10 +211,10 @@ def make_reference(conn: Connection) -> Callable[..., uuid.UUID]:
                 "INSERT INTO reference_assets"
                 " (id, project_id, kind, character_id, location_id, prop_id, status,"
                 "  storage_key, sha256, mime_type, view, pose, expression, metadata,"
-                "  approved_at)"
+                "  approved_at, width, height)"
                 " VALUES (:id, :project_id, :kind, :character_id, :location_id, :prop_id,"
                 "  :status, :storage_key, :sha256, 'image/png', :view, :pose, :expression,"
-                "  CAST(:metadata AS jsonb), :approved_at)"
+                "  CAST(:metadata AS jsonb), :approved_at, :width, :height)"
             ),
             {
                 "id": value,
@@ -229,6 +234,8 @@ def make_reference(conn: Connection) -> Callable[..., uuid.UUID]:
                 "approved_at": datetime.now(timezone.utc)
                 if status == "approved"
                 else None,
+                "width": width,
+                "height": height,
             },
         )
         return value
@@ -296,6 +303,89 @@ def make_composition(conn: Connection) -> Callable[..., uuid.UUID]:
             },
         )
         return value
+
+    return _make
+
+
+@pytest.fixture
+def make_scene(conn: Connection) -> Callable[..., uuid.UUID]:
+    def _make(
+        *, project_id: uuid.UUID, sequence_no: int = 1, title: str | None = None
+    ) -> uuid.UUID:
+        value = uuid.uuid4()
+        conn.execute(
+            text(
+                "INSERT INTO scenes (id, project_id, sequence_no, title)"
+                " VALUES (:id, :project_id, :sequence_no, :title)"
+            ),
+            {
+                "id": value,
+                "project_id": project_id,
+                "sequence_no": sequence_no,
+                "title": title,
+            },
+        )
+        return value
+
+    return _make
+
+
+@pytest.fixture
+def make_shot(conn: Connection) -> Callable[..., uuid.UUID]:
+    def _make(*, scene_id: uuid.UUID, sequence_no: int = 1) -> uuid.UUID:
+        value = uuid.uuid4()
+        conn.execute(
+            text(
+                "INSERT INTO shots (id, scene_id, sequence_no)"
+                " VALUES (:id, :scene_id, :sequence_no)"
+            ),
+            {"id": value, "scene_id": scene_id, "sequence_no": sequence_no},
+        )
+        return value
+
+    return _make
+
+
+@pytest.fixture
+def make_png_reference(
+    tmp_path, make_reference: Callable[..., uuid.UUID]
+) -> Callable[..., uuid.UUID]:
+    """Референс с настоящим PNG в storage: нужен композитору и API-тестам."""
+
+    def _make(
+        *,
+        project_id: uuid.UUID,
+        character_id: uuid.UUID | None = None,
+        location_id: uuid.UUID | None = None,
+        prop_id: uuid.UUID | None = None,
+        status: str = "approved",
+        width: int = 48,
+        height: int = 48,
+        color: tuple[int, ...] = (255, 0, 0, 255),
+        has_alpha: bool = True,
+    ) -> uuid.UUID:
+        mode = "RGBA" if has_alpha else "RGB"
+        fill = color if has_alpha else color[:3]
+        image = Image.new(mode, (width, height), fill)
+        buffer = io.BytesIO()
+        # Nonce в tEXt-чанке: одинаковые по пикселям PNG всё равно получают разный sha256.
+        pnginfo = PngImagePlugin.PngInfo()
+        pnginfo.add_text("test-nonce", uuid.uuid4().hex)
+        image.save(buffer, format="PNG", pnginfo=pnginfo)
+        store = BlobStore(tmp_path / "storage")
+        blob = store.put_bytes(buffer.getvalue(), suffix=".png")
+        return make_reference(
+            project_id=project_id,
+            character_id=character_id,
+            location_id=location_id,
+            prop_id=prop_id,
+            status=status,
+            storage_key=blob.storage_key,
+            sha256=blob.sha256,
+            metadata={"has_alpha": has_alpha},
+            width=width,
+            height=height,
+        )
 
     return _make
 
