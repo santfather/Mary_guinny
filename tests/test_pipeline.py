@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pipeline.config import Settings
 from pipeline.models import PipelinePhase, PipelineStage
 from pipeline.orchestrator import Orchestrator
 from pipeline.utils import parse_script
@@ -120,8 +121,7 @@ async def test_character_refs_stage_reports_missing(tmp_path: Path):
     (tmp_path / "characters" / "marija").mkdir(parents=True)
     (tmp_path / "characters" / "guinness" / "character_bible.txt").write_text("bible")
 
-    orch = Orchestrator()
-    orch.settings = type(orch.settings)(
+    settings = Settings(
         project_root=tmp_path,
         ollama_base_url="http://localhost:11434",
         ollama_model="catshow",
@@ -134,6 +134,7 @@ async def test_character_refs_stage_reports_missing(tmp_path: Path):
         suno_api_key=None,
         litellm_model="ollama/catshow",
     )
+    orch = Orchestrator(settings=settings)
 
     results = await orch.run(episode_id="ep01", stage=PipelineStage.CHARACTER_REFS)
     assert results[0].success is False
