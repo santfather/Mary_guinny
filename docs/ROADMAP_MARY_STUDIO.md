@@ -1,7 +1,7 @@
 # Roadmap Mary Studio
 
-> **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01 и WP-02
-> выполнены (2026-10-26), WP-03 и далее не начаты.
+> **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02 и
+> WP-03 выполнены (2026-10-26), WP-04 и далее не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
 > **Принцип:** маленькие проверяемые пакеты; каждый следующий начинается только после
@@ -249,6 +249,24 @@ PostgreSQL 16.14; `alembic check` → «No new upgrade operations detected»;
 дубликатов; оригиналы на месте; отчёт создан; для PNG указан признак альфа-канала.
 **Проверка:** импорт на копии данных; сравнение sha256; `pytest backend/tests/test_storage.py`.
 **Не делать:** удаление/перемещение пользовательских файлов.
+
+**Состояние:** выполнен 2026-10-26. Добавлены `backend/app/storage.py`
+(content-addressed `blobs/<aa>/<sha256><ext>`, атомарная публикация через `os.replace`,
+запрет абсолютных путей и `..`), `backend/app/image_probe.py` (PNG/JPEG: `width`,
+`height`, `mime_type`, признак альфа-канала без новых зависимостей),
+`backend/app/legacy_import.py` (dry-run/apply, идемпотентность по sha256),
+CLI `uv run python -m app.import_legacy --dry-run|--apply`, `POST /api/artifacts` и
+`GET /api/artifacts/{id}[/content]`. `MARY_STORAGE_ROOT` / `MARY_LEGACY_ROOT` в
+`app/config.py`; `storage/` добавлен в `.gitignore`.
+Проверки: `uv run pytest -q` → 51 passed; legacy `pytest` → 15 passed;
+`alembic check` → «No new upgrade operations detected» (схема не менялась).
+Dry-run на реальном дереве: 62 операции создания, 24 предупреждения.
+Apply: создано 62 записи, 26 blob (16 референсов, 5 keyframe, 5 video), дубликатов в БД
+и storage нет; повторный apply → `created=0`; sha256 всех 26 blob совпадает с БД;
+sha256 34 исходных файлов до/после импорта идентичны. Отчёт —
+`docs/MIGRATION-REPORT.md`. `characters.kind` для legacy-персонажей — `other`
+(зафиксировано в отчёте как требующее уточнения); `shots.start_keyframe_artifact_id`
+не заполнялся (S9/A5: единственный писатель — `promote-keyframe`).
 
 ---
 

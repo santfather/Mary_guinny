@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.artifacts import router as artifacts_router
 from app.config import Settings
 from app.db import build_engine
 
@@ -14,6 +15,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Mary Studio API", version="0.1.0")
     app.state.settings = resolved
     app.state.engine = build_engine(resolved)
+    app.include_router(artifacts_router)
 
     @app.get("/api/health")
     @app.get("/health")

@@ -108,5 +108,10 @@
 - WP-02 выполнен: миграции `0002_character_library`, `0003_reference_constraints`,
   `0004_composition_revisions` — библиотека персонажей, project isolation, ревизии
   композиций, S13–S18 и триггеры иммутабельности approved-записей.
+- WP-03 выполнен: `app/storage.py` (content-addressed blob, atomic publish),
+  `app/image_probe.py` (PNG/JPEG + альфа-канал), `app/legacy_import.py` и CLI
+  `python -m app.import_legacy`, `POST /api/artifacts` + `GET /api/artifacts/{id}[/content]`.
+  Импорт `characters/` и `episodes/` выполнен, отчёт — `docs/MIGRATION-REPORT.md`;
+  оригиналы не перемещались (sha256 до/после совпадают), повторный запуск идемпотентен.
 - Frontend, worker и логика очереди отсутствуют.
-- Тесты: legacy — 15 passed; backend — 32 passed.
+- Тесты: legacy — 15 passed; backend — 51 passed.

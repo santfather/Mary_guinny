@@ -9,6 +9,7 @@ __pycache__/
 runtime/
 
 # Пользовательские ассеты и результаты рендера — вне Git (DECISIONS.md, D3)
+storage/
 characters/**/*.png
 characters/**/*.jpg
 characters/**/*.jpeg
