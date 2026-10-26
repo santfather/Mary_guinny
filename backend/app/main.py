@@ -9,9 +9,8 @@ from app.api.artifacts import router as artifacts_router
 from app.api.characters import router as characters_router
 from app.api.compositions import router as compositions_router
 from app.api.jobs import router as jobs_router
-from app.api.locations import router as locations_router
+from app.api.library import router as library_router
 from app.api.projects import router as projects_router
-from app.api.props import router as props_router
 from app.api.reference_assets import router as reference_assets_router
 from app.api.scene_plans import router as scene_plans_router
 from app.api.shots import router as shots_router
@@ -29,8 +28,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(projects_router)
     app.include_router(characters_router)
     app.include_router(reference_assets_router)
-    app.include_router(locations_router)
-    app.include_router(props_router)
+    app.include_router(library_router)
     app.include_router(shots_router)
     app.include_router(compositions_router)
     app.include_router(scene_plans_router)

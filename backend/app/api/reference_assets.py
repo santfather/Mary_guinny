@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,33 @@ _REVIEW_TRANSITIONS = {
     "approve": {"draft", "rejected"},
     "reject": {"draft", "approved"},
 }
+
+_OWNER_FIELDS = ("character_id", "location_id", "prop_id")
+
+
+def _clear_other_primary(session: Session, asset: ReferenceAsset) -> None:
+    """Основной референс у владельца один.
+
+    Утверждённые строки неизменяемы (S15), поэтому их role не трогаем: после
+    approve выбранный основной закрепляется за своим владельцем.
+    """
+
+    owner_field = next(
+        (field for field in _OWNER_FIELDS if getattr(asset, field) is not None), None
+    )
+    if owner_field is None:
+        return
+    others = session.scalars(
+        select(ReferenceAsset).where(
+            ReferenceAsset.project_id == asset.project_id,
+            getattr(ReferenceAsset, owner_field) == getattr(asset, owner_field),
+            ReferenceAsset.id != asset.id,
+            ReferenceAsset.role == "primary",
+            ReferenceAsset.status.in_(("draft", "rejected")),
+        )
+    )
+    for other in others:
+        other.role = None
 
 
 def _require_asset(session: Session, asset_id: uuid.UUID) -> ReferenceAsset:
@@ -97,6 +125,8 @@ def update_reference_asset(
         )
     for field in payload.model_fields_set:
         setattr(asset, field, getattr(payload, field))
+    if asset.role == "primary":
+        _clear_other_primary(session, asset)
     session.commit()
     session.refresh(asset)
     return ReferenceOut.from_asset(asset)

@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.artifacts import read_body_with_limit
-from app.api.deps import get_session, get_settings, get_store
+from app.api.deps import get_session, get_settings, get_store, require_project
 from app.api.schemas import ProjectOut, ReferenceOut, ReferencePose, ReferenceView
 from app.config import Settings
 from app.image_probe import ImageProbeError, probe_image_bytes
@@ -41,8 +41,7 @@ def list_project_references(
 ) -> list[ReferenceOut]:
     """Все референсы проекта для пикера слоёв композиции (WP-05)."""
 
-    if session.get(Project, project_id) is None:
-        raise HTTPException(status_code=404, detail="project not found")
+    require_project(session, project_id)
 
     statement = select(ReferenceAsset).where(ReferenceAsset.project_id == project_id)
     if status is not None:
@@ -118,8 +117,7 @@ async def upload_project_reference(
 ) -> ReferenceOut:
     """Загрузка PNG/JPEG в существующий BlobStore; sha256 считает сервер."""
 
-    if session.get(Project, project_id) is None:
-        raise HTTPException(status_code=404, detail="project not found")
+    require_project(session, project_id)
     _check_owner(session, project_id, kind, character_id, location_id, prop_id)
 
     body = await read_body_with_limit(request, settings.reference_upload_max_bytes)

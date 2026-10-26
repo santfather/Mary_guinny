@@ -127,8 +127,11 @@ class CharacterDetail(CharacterSummary):
     bible_versions: list[BibleVersionSummary]
 
 
-class LocationSummary(BaseModel):
+class LibraryEntitySummary(BaseModel):
+    """Карточка локации или предмета; обе сущности имеют одинаковый набор полей."""
+
     id: uuid.UUID
+    project_id: uuid.UUID
     slug: str
     name: str
     description: str | None
@@ -136,18 +139,15 @@ class LocationSummary(BaseModel):
     reference_count: int
 
 
-class LocationDetail(LocationSummary):
+class LibraryEntityDetail(LibraryEntitySummary):
     references: list[ReferenceOut]
 
 
-class PropSummary(BaseModel):
-    id: uuid.UUID
-    slug: str
-    name: str
-    description: str | None
-    status: str
-    reference_count: int
+class LibraryEntityCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
 
 
-class PropDetail(PropSummary):
-    references: list[ReferenceOut]
+class LibraryEntityUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import type { ReferenceAsset } from "../api/types";
-import { poseLabel, viewLabel } from "../labels";
+import { canApproveReference, canRejectReference, poseLabel, viewLabel } from "../labels";
 import { AlphaBadge } from "./AlphaBadge";
 import { StatusBadge } from "./StatusBadge";
 
@@ -28,8 +28,8 @@ export function ReferenceLightbox({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const canApprove = asset.status === "draft" || asset.status === "rejected";
-  const canReject = asset.status === "draft" || asset.status === "approved";
+  const canApprove = canApproveReference(asset.status);
+  const canReject = canRejectReference(asset.status);
   const view = viewLabel(asset.view);
   const pose = poseLabel(asset.pose);
 

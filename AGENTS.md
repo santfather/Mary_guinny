@@ -135,5 +135,11 @@
   `Idempotency-Key` в `POST /api/shots/{id}/render`, `worker/fake_worker.py`
   (ffmpeg → валидный MP4). `lease_expired` не перезапускается автоматически.
 - WP-05B (multi-reference video PoC) не начат: LTX в WP-05A не запускался.
-- Тесты: legacy — 15 passed; backend — 137 passed; `alembic check` — no new operations;
+- WP-04A выполнен: единый `app/api/library.py` (локации и предметы через реестр
+  `_LibraryKind`), `deps.require_project`, схемы `LibraryEntity*`; удалены
+  `api/locations.py`, `api/props.py`; UI — `pages/LibraryPages.tsx`,
+  `hooks/useReferenceReview.ts`, `libraryApi`; удалены `LocationsPage`, `PropsPage`,
+  `ReferenceGrid`. «Основной референс» — `role='primary'` с единственностью среди
+  mutable-референсов (`_clear_other_primary`); approved остаётся неизменяемым (S15).
+- Тесты: legacy — 15 passed; backend — 143 passed; `alembic check` — no new operations;
   UI — `npm run build`.

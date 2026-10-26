@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import uuid
+
+from PIL import Image
 
 from app.storage import BlobStore
 
@@ -153,6 +156,7 @@ def test_locations_and_props(
     assert locations.json() == [
         {
             "id": str(location_id),
+            "project_id": str(project_id),
             "slug": "living-room",
             "name": "Living room",
             "description": None,
@@ -178,3 +182,300 @@ def test_locations_and_props(
     assert api_client.get(f"/api/props/{uuid.uuid4()}").status_code == 404
     assert api_client.get(f"/api/projects/{uuid.uuid4()}/locations").status_code == 404
     assert api_client.get(f"/api/projects/{uuid.uuid4()}/props").status_code == 404
+
+
+def _png(color: tuple[int, int, int, int] = (255, 0, 0, 255)) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGBA", (32, 24), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _upload(client, project_id, data: bytes, **params):
+    return client.post(
+        f"/api/projects/{project_id}/references",
+        params=params,
+        content=data,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+
+def test_create_and_update_location(api_client, project_id) -> None:
+    created = api_client.post(
+        f"/api/projects/{project_id}/locations",
+        json={"name": "Кухня", "description": "Тёплая кухня"},
+    )
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["slug"] == "kuhnya"
+    assert payload["project_id"] == str(project_id)
+    assert payload["status"] == "draft"
+    assert payload["reference_count"] == 0
+
+    listed = api_client.get(f"/api/projects/{project_id}/locations")
+    assert [item["id"] for item in listed.json()] == [payload["id"]]
+
+    updated = api_client.patch(
+        f"/api/locations/{payload['id']}", json={"name": "Кухня 2"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Кухня 2"
+    assert updated.json()["description"] == "Тёплая кухня"
+
+    cleared = api_client.patch(
+        f"/api/locations/{payload['id']}", json={"description": None}
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["description"] is None
+
+    detail = api_client.get(f"/api/locations/{payload['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["references"] == []
+
+
+def test_create_prop_keeps_slug_unique(api_client, project_id, prop_id) -> None:
+    first = api_client.post(
+        f"/api/projects/{project_id}/props", json={"name": "Red ball"}
+    )
+    assert first.status_code == 201
+    assert first.json()["slug"] == "red-ball-2"
+
+    second = api_client.post(
+        f"/api/projects/{project_id}/props", json={"name": "Red ball"}
+    )
+    assert second.status_code == 201
+    assert second.json()["slug"] == "red-ball-3"
+
+    assert len(api_client.get(f"/api/projects/{project_id}/props").json()) == 3
+
+
+def test_create_and_update_validate_input(api_client, project_id) -> None:
+    assert (
+        api_client.post(
+            f"/api/projects/{uuid.uuid4()}/locations", json={"name": "X"}
+        ).status_code
+        == 404
+    )
+    assert (
+        api_client.post(
+            f"/api/projects/{project_id}/locations", json={"name": ""}
+        ).status_code
+        == 422
+    )
+    assert (
+        api_client.patch(
+            f"/api/locations/{uuid.uuid4()}", json={"name": "X"}
+        ).status_code
+        == 404
+    )
+    assert (
+        api_client.patch(f"/api/props/{uuid.uuid4()}", json={"name": "X"}).status_code
+        == 404
+    )
+
+    created = api_client.post(f"/api/projects/{project_id}/props", json={"name": "Ball"})
+    assert created.status_code == 201
+    assert (
+        api_client.patch(
+            f"/api/props/{created.json()['id']}", json={"name": None}
+        ).status_code
+        == 422
+    )
+
+
+def test_library_references_upload_and_review(
+    api_client, project_id, location_id, prop_id, second_project_id
+) -> None:
+    first = _upload(
+        api_client,
+        project_id,
+        _png(),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    assert first.status_code == 201
+
+    duplicate = _upload(
+        api_client,
+        project_id,
+        _png(),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["id"] == first.json()["id"]
+
+    second_image = _upload(
+        api_client,
+        project_id,
+        _png(color=(0, 255, 0, 255)),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    assert second_image.status_code == 201
+
+    prop_reference = _upload(
+        api_client,
+        project_id,
+        _png(color=(0, 0, 255, 255)),
+        kind="prop_reference",
+        prop_id=str(prop_id),
+    )
+    assert prop_reference.status_code == 201
+
+    detail = api_client.get(f"/api/locations/{location_id}")
+    assert detail.json()["reference_count"] == 2
+    assert {item["id"] for item in detail.json()["references"]} == {
+        first.json()["id"],
+        second_image.json()["id"],
+    }
+    assert api_client.get(f"/api/projects/{project_id}/props").json()[0][
+        "reference_count"
+    ] == 1
+
+    approved = api_client.post(f"/api/reference-assets/{first.json()['id']}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+
+    rejected = api_client.post(
+        f"/api/reference-assets/{prop_reference.json()['id']}/reject"
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    # S15: утверждённый референс нельзя переразметить
+    assert (
+        api_client.patch(
+            f"/api/reference-assets/{first.json()['id']}", json={"role": "primary"}
+        ).status_code
+        == 409
+    )
+
+    # проектная изоляция: локация проекта A недоступна из проекта B
+    foreign = _upload(
+        api_client,
+        second_project_id,
+        _png(color=(1, 2, 3, 255)),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    assert foreign.status_code == 404
+
+
+def test_primary_reference_selection_flow(api_client, project_id, location_id) -> None:
+    first = _upload(
+        api_client,
+        project_id,
+        _png(color=(9, 9, 9, 255)),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    second = _upload(
+        api_client,
+        project_id,
+        _png(color=(8, 8, 8, 255)),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+
+    marked = api_client.patch(
+        f"/api/reference-assets/{first.json()['id']}", json={"role": "primary"}
+    )
+    assert marked.status_code == 200
+    assert marked.json()["role"] == "primary"
+
+    promoted = api_client.patch(
+        f"/api/reference-assets/{second.json()['id']}", json={"role": "primary"}
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["role"] == "primary"
+    # Основной у владельца один: предыдущий mutable-референс теряет role.
+    first_after = api_client.get(f"/api/reference-assets/{first.json()['id']}")
+    assert first_after.json()["role"] is None
+
+    approved = api_client.post(f"/api/reference-assets/{second.json()['id']}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["role"] == "primary"
+
+    frozen = api_client.patch(
+        f"/api/reference-assets/{second.json()['id']}", json={"role": None}
+    )
+    assert frozen.status_code == 409
+
+    # Утверждённый основной закреплён (S15): новый mutable-основной его не снимает.
+    third = _upload(
+        api_client,
+        project_id,
+        _png(color=(7, 7, 7, 255)),
+        kind="location_reference",
+        location_id=str(location_id),
+    )
+    promoted_third = api_client.patch(
+        f"/api/reference-assets/{third.json()['id']}", json={"role": "primary"}
+    )
+    assert promoted_third.status_code == 200
+    assert promoted_third.json()["role"] == "primary"
+    assert api_client.get(f"/api/reference-assets/{second.json()['id']}").json()["role"] == "primary"
+
+
+def test_approved_library_references_feed_composition_and_plan(
+    api_client, project_id, shot_id, location_id, prop_id, make_png_reference
+) -> None:
+    location_reference = make_png_reference(
+        project_id=project_id, location_id=location_id, status="approved"
+    )
+    prop_reference = make_png_reference(
+        project_id=project_id, prop_id=prop_id, status="draft"
+    )
+
+    composition = api_client.post(
+        f"/api/shots/{shot_id}/compositions",
+        json={
+            "width": 64,
+            "height": 64,
+            "layers": [{"reference_asset_id": str(location_reference), "z_index": 0}],
+        },
+    )
+    assert composition.status_code == 201
+    assert composition.json()["layers"][0]["reference"]["location_id"] == str(
+        location_id
+    )
+
+    blocked_composition = api_client.post(
+        f"/api/shots/{shot_id}/compositions",
+        json={
+            "width": 64,
+            "height": 64,
+            "layers": [{"reference_asset_id": str(prop_reference), "z_index": 0}],
+        },
+    )
+    assert blocked_composition.status_code == 409
+
+    plan = api_client.post(
+        f"/api/shots/{shot_id}/scene-plans",
+        json={
+            "plan": {
+                "canvas": {"width": 768, "height": 512},
+                "references": [
+                    {"asset_id": str(location_reference), "role": "location", "alias": "room"}
+                ],
+                "motion_prompt": "static camera",
+            }
+        },
+    )
+    assert plan.status_code == 201
+    assert plan.json()["plan"]["references"][0]["entity_id"] == str(location_id)
+
+    blocked_plan = api_client.post(
+        f"/api/shots/{shot_id}/scene-plans",
+        json={
+            "plan": {
+                "canvas": {"width": 768, "height": 512},
+                "references": [
+                    {"asset_id": str(prop_reference), "role": "prop", "alias": "ball"}
+                ],
+                "motion_prompt": "static camera",
+            }
+        },
+    )
+    assert blocked_plan.status_code == 409

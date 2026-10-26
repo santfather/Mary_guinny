@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_session
+from app.api.deps import get_session, require_project
 from app.api.schemas import (
     BibleVersionOut,
     BibleVersionSummary,
@@ -16,7 +16,7 @@ from app.api.schemas import (
     CharacterSummary,
     ReferenceOut,
 )
-from app.models import Character, CharacterBibleVersion, Project, ReferenceAsset
+from app.models import Character, CharacterBibleVersion, ReferenceAsset
 
 router = APIRouter(prefix="/api", tags=["characters"])
 
@@ -25,13 +25,6 @@ LibraryStatus = Literal["draft", "active", "archived"]
 ReferenceStatus = Literal["draft", "approved", "rejected", "superseded"]
 ReferenceView = Literal["front", "side", "three_quarter", "back", "other"]
 ReferencePose = Literal["stand", "sit", "walk", "lie", "sleep", "custom"]
-
-
-def _require_project(session: Session, project_id: uuid.UUID) -> Project:
-    project = session.get(Project, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="project not found")
-    return project
 
 
 def _require_character(session: Session, character_id: uuid.UUID) -> Character:
@@ -70,7 +63,7 @@ def list_characters(
     status: LibraryStatus | None = None,
     session: Session = Depends(get_session),
 ) -> list[CharacterSummary]:
-    _require_project(session, project_id)
+    require_project(session, project_id)
 
     statement = select(Character).where(Character.project_id == project_id)
     if kind is not None:

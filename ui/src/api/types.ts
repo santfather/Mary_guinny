@@ -56,8 +56,11 @@ export interface CharacterDetail extends CharacterSummary {
   bible_versions: BibleVersionSummary[];
 }
 
-export interface LocationSummary {
+export type LibraryKind = "location" | "prop";
+
+export interface LibraryEntity {
   id: string;
+  project_id: string;
   slug: string;
   name: string;
   description: string | null;
@@ -65,13 +68,8 @@ export interface LocationSummary {
   reference_count: number;
 }
 
-export interface PropSummary {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  status: string;
-  reference_count: number;
+export interface LibraryEntityDetail extends LibraryEntity {
+  references: ReferenceAsset[];
 }
 
 export interface ReferenceFilters {

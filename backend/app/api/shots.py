@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_session
+from app.api.deps import get_session, require_project
 from app.api.schemas import ReferenceOut
 from app.api.shot_schemas import (
     AttemptOut,
@@ -29,7 +29,6 @@ from app.models import (
     Artifact,
     Episode,
     Job,
-    Project,
     RenderAttempt,
     Scene,
     Shot,
@@ -50,13 +49,6 @@ ACTIVE_JOB_STATUSES = (
     "cancel_requested",
     "lease_expired",
 )
-
-
-def require_project(session: Session, project_id: uuid.UUID) -> Project:
-    project = session.get(Project, project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="project not found")
-    return project
 
 
 def require_scene(session: Session, scene_id: uuid.UUID) -> Scene:

@@ -1,11 +1,16 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
 
-import { api } from "../api/client";
+import { api, libraryApi } from "../api/client";
 import type { ReferenceAsset } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
-import { poseLabel, referenceKindLabel, viewLabel } from "../labels";
-import { StatusBadge } from "./StatusBadge";
+import {
+  canApproveReference,
+  poseLabel,
+  referenceKindLabel,
+  viewLabel,
+} from "../labels";
+import { ReferenceCard } from "./ReferenceCard";
 
 const VIEWS = ["front", "side", "three_quarter", "back", "other"] as const;
 const POSES = ["stand", "sit", "walk", "lie", "sleep", "custom"] as const;
@@ -34,8 +39,8 @@ interface ReferencePickerProps {
 
 export function ReferencePicker({ projectId, assets, onChanged }: ReferencePickerProps) {
   const characters = useAsync(() => api.characters(projectId), [projectId]);
-  const locations = useAsync(() => api.locations(projectId), [projectId]);
-  const props = useAsync(() => api.props(projectId), [projectId]);
+  const locations = useAsync(() => libraryApi.location.list(projectId), [projectId]);
+  const props = useAsync(() => libraryApi.prop.list(projectId), [projectId]);
 
   const [kind, setKind] = useState<UploadKind>("character_reference");
   const [ownerId, setOwnerId] = useState("");
@@ -45,7 +50,6 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const characterList = characters.state.status === "ready" ? characters.state.data : [];
   const locationList = locations.state.status === "ready" ? locations.state.data : [];
@@ -111,7 +115,7 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
     setError(null);
     setNotice(null);
     try {
-      const asset = await api.uploadReference(
+      const [asset] = await api.uploadReferences(
         projectId,
         {
           kind,
@@ -121,7 +125,7 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
           view: view === "" ? undefined : view,
           pose: pose === "" ? undefined : pose,
         },
-        file,
+        [file],
       );
       form.reset();
       setFile(null);
@@ -139,17 +143,6 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
     } finally {
       setBusy(null);
     }
-  }
-
-  function describe(asset: ReferenceAsset): string {
-    const parts = [
-      referenceKindLabel(asset.kind),
-      asset.status,
-      viewLabel(asset.view) ?? "",
-      poseLabel(asset.pose) ?? "",
-    ];
-    if (asset.has_alpha === false) parts.push("без альфа-канала");
-    return parts.filter((part) => part !== "").join(" · ");
   }
 
   return (
@@ -212,7 +205,6 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
         <label className="field field--grow">
           <span>Файл PNG/JPEG</span>
           <input
-            ref={inputRef}
             type="file"
             accept="image/png,image/jpeg"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
@@ -288,78 +280,35 @@ export function ReferencePicker({ projectId, assets, onChanged }: ReferencePicke
         </p>
       ) : (
         <div className="grid">
-          {assets.map((asset) => {
-            const editable = asset.status === "draft" || asset.status === "rejected";
-            const canReject = asset.status === "draft" || asset.status === "approved";
-            return (
-              <article key={asset.id} className="reference">
-                <div className="reference__image">
-                  <img src={asset.content_url} alt={describe(asset)} />
-                </div>
-                <div className="reference__meta">
-                  <StatusBadge status={asset.status} />
-                  {asset.view === "front" && <span className="badge badge--ok">front</span>}
-                  {asset.has_alpha === false && (
-                    <span className="badge badge--warn">без альфы</span>
-                  )}
-                </div>
-                <p className="muted mono">{describe(asset)}</p>
-                <p className="muted mono">
-                  {asset.width ?? "?"}×{asset.height ?? "?"} · {asset.sha256.slice(0, 8)}
-                </p>
-                <div className="reference__actions">
-                  {editable && asset.character_id !== null && asset.view !== "front" && (
-                    <button
-                      type="button"
-                      className="button button--small"
-                      disabled={busy !== null}
-                      onClick={() =>
+          {assets.map((asset) => (
+            <ReferenceCard
+              key={asset.id}
+              asset={asset}
+              pending={busy === asset.id}
+              onOpen={(item) => window.open(item.content_url, "_blank", "noopener")}
+              onApprove={(item) =>
+                void run(item.id, () => api.approve(item.id), "Референс утверждён.")
+              }
+              onReject={(item) =>
+                void run(item.id, () => api.reject(item.id), "Референс отклонён.")
+              }
+              extraAction={
+                asset.character_id !== null &&
+                asset.view !== "front" &&
+                canApproveReference(asset.status)
+                  ? {
+                      label: "Сделать front",
+                      onSelect: (item) =>
                         void run(
-                          `front-${asset.id}`,
-                          () => api.relabel(asset.id, { view: "front" }),
+                          item.id,
+                          () => api.relabel(item.id, { view: "front" }),
                           "Референс отмечен как front. Утвердите его вручную.",
-                        )
-                      }
-                    >
-                      Сделать front
-                    </button>
-                  )}
-                  {editable && (
-                    <button
-                      type="button"
-                      className="button button--small button--ok"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        void run(
-                          `approve-${asset.id}`,
-                          () => api.approve(asset.id),
-                          "Референс утверждён.",
-                        )
-                      }
-                    >
-                      Утвердить
-                    </button>
-                  )}
-                  {canReject && (
-                    <button
-                      type="button"
-                      className="button button--small button--danger"
-                      disabled={busy !== null}
-                      onClick={() =>
-                        void run(
-                          `reject-${asset.id}`,
-                          () => api.reject(asset.id),
-                          "Референс отклонён.",
-                        )
-                      }
-                    >
-                      Отклонить
-                    </button>
-                  )}
-                </div>
-              </article>
-            );
-          })}
+                        ),
+                    }
+                  : undefined
+              }
+            />
+          ))}
         </div>
       )}
     </section>

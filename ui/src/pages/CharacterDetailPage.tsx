@@ -8,11 +8,12 @@ import type {
   ReferenceFilters,
 } from "../api/types";
 import { FilterBar } from "../components/FilterBar";
-import { ReferenceGrid } from "../components/ReferenceGrid";
+import { ReferenceCard } from "../components/ReferenceCard";
 import { ReferenceLightbox } from "../components/ReferenceLightbox";
 import { StateView } from "../components/StateView";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsync } from "../hooks/useAsync";
+import { useReferenceReview } from "../hooks/useReferenceReview";
 import { kindLabel } from "../labels";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -25,9 +26,8 @@ type LibraryData = [CharacterDetail, BibleVersion[]];
 export function CharacterDetailPage({ characterId }: { characterId: string }) {
   const [filters, setFilters] = useState<ReferenceFilters>({ status: "", view: "", pose: "" });
   const [snapshot, setSnapshot] = useState<LibraryData | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReferenceAsset | null>(null);
+  const { pendingId, actionError, review } = useReferenceReview();
 
   const library = useAsync(
     () => Promise.all([api.character(characterId), api.bible(characterId)]),
@@ -44,19 +44,15 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
     }
   }, [library.state]);
 
-  async function review(asset: ReferenceAsset, action: "approve" | "reject"): Promise<void> {
-    setPendingId(asset.id);
-    setActionError(null);
-    try {
-      const updated = action === "approve" ? await api.approve(asset.id) : await api.reject(asset.id);
-      setPreview((current) => (current !== null && current.id === updated.id ? updated : current));
-      references.reload();
-      library.reload();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setPendingId(null);
-    }
+  async function handleReview(
+    asset: ReferenceAsset,
+    action: "approve" | "reject",
+  ): Promise<void> {
+    const updated = await review(asset, action);
+    if (updated === null) return;
+    setPreview((current) => (current !== null && current.id === updated.id ? updated : current));
+    references.reload();
+    library.reload();
   }
 
   if (snapshot === null) {
@@ -172,13 +168,18 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
               message="Измените фильтры или добавьте файлы в библиотеку."
             />
           ) : (
-            <ReferenceGrid
-              assets={references.state.data}
-              pendingId={pendingId}
-              onOpen={setPreview}
-              onApprove={(asset) => void review(asset, "approve")}
-              onReject={(asset) => void review(asset, "reject")}
-            />
+            <div className="grid">
+              {references.state.data.map((asset) => (
+                <ReferenceCard
+                  key={asset.id}
+                  asset={asset}
+                  pending={pendingId === asset.id}
+                  onOpen={setPreview}
+                  onApprove={(item) => void handleReview(item, "approve")}
+                  onReject={(item) => void handleReview(item, "reject")}
+                />
+              ))}
+            </div>
           ))}
       </section>
 
@@ -187,8 +188,8 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
           asset={preview}
           pending={pendingId === preview.id}
           onClose={() => setPreview(null)}
-          onApprove={(asset) => void review(asset, "approve")}
-          onReject={(asset) => void review(asset, "reject")}
+          onApprove={(asset) => void handleReview(asset, "approve")}
+          onReject={(asset) => void handleReview(asset, "reject")}
         />
       )}
     </section>

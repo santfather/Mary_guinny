@@ -1,7 +1,7 @@
 # Roadmap Mary Studio
 
 > **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02,
-> WP-03, WP-04, WP-05, WP-05A и WP-06 выполнены (2026-10-26); WP-05B и WP-07 и далее
+> WP-03, WP-04, WP-04A, WP-05, WP-05A и WP-06 выполнены (2026-10-26); WP-05B и WP-07 и далее
 > не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
@@ -488,6 +488,49 @@ matting/изменении canvas оформлено предложением.
 operations; `npm run build` — успешно; `ffprobe` на MP4 FakeWorker — валидный
 h264-файл заданной длительности.
 **Открыто:** SSE, публичный API рендера и отмена — WP-07; реальный ComfyUI/LTX — WP-08.
+
+---
+
+### WP-04A. Locations & Props Library Completion + аудит кода
+
+Расширение WP-04: полноценная работа с локациями и предметами через веб-интерфейс
+плюс обязательный аудит дублирования в затронутых модулях.
+
+**Объём:**
+
+- Backend: единый `app/api/library.py` для локаций и предметов (реестр
+  `_LibraryKind`: модель, поле-владелец референса, label), общий
+  `deps.require_project`, единые схемы `LibraryEntitySummary/Detail/Create/Update`.
+- Загрузка изображений, SHA256/dedup, MIME/размер и approve/reject переиспользуются:
+  `POST /api/projects/{id}/references`, `PATCH /api/reference-assets/{id}`,
+  `POST .../approve|reject`. Новых таблиц и хранилищ нет.
+- «Основной референс» = `reference_assets.role = 'primary'`; уникальность среди
+  mutable-референсов владельца обеспечивает `_clear_other_primary` при PATCH.
+- Frontend: `pages/LibraryPages.tsx` (параметризованные `LibraryListPage` и
+  `LibraryDetailPage`), `hooks/useReferenceReview.ts`, `libraryApi` в `api/client.ts`,
+  роуты `#/locations/{id}` и `#/props/{id}`, галерея через `ReferenceCard`,
+  лайтбокс, выбор основного, предупреждение об отсутствии альфы у предмета.
+
+**Миграции:** нет (используются существующие `locations`, `props`, `reference_assets`).
+
+**Зависит:** WP-04, WP-05A.
+
+**Состояние:** выполнен 2026-10-26. Удалены модули-близнецы `api/locations.py` и
+`api/props.py`, `pages/LocationsPage.tsx`, `pages/PropsPage.tsx` и pass-through
+`components/ReferenceGrid.tsx`. `api/reference_assets.py` получил правило единственного
+основного референса (утверждённые строки не изменяются — S15). `ReferencePicker`
+переведён на `ReferenceCard` и `libraryApi`, дубли карточек и `describe()` удалены.
+Проверки: `uv run pytest -q` → 143 passed; legacy → 15 passed; `alembic check` —
+no new upgrade operations; `npm run build` — успешно. Ручной сценарий в браузере:
+создание локации и предмета из UI, галерея и лайтбокс, approve/reject, перенос
+основного референса (ровно один бейдж), предупреждение об отсутствии альфа-канала
+у предмета, зелёный статус локации в ReferencePicker шота, отсутствие регрессий
+в библиотеке персонажей.
+
+**Открыто:** загрузка файлов через браузерный файловый диалог не автоматизирована
+(проверена на уровне API и backend-тестов); после approve основной референс
+закрепляется навсегда — для смены нужна колонка primary на уровне владельца или
+ослабление S15-триггера; у локаций/предметов нет DELETE/архивации.
 
 ---
 

@@ -1,5 +1,5 @@
 import type { ReferenceAsset } from "../api/types";
-import { poseLabel, viewLabel } from "../labels";
+import { canApproveReference, canRejectReference, poseLabel, viewLabel } from "../labels";
 import { AlphaBadge } from "./AlphaBadge";
 import { StatusBadge } from "./StatusBadge";
 
@@ -9,6 +9,7 @@ interface ReferenceCardProps {
   onOpen: (asset: ReferenceAsset) => void;
   onApprove: (asset: ReferenceAsset) => void;
   onReject: (asset: ReferenceAsset) => void;
+  extraAction?: { label: string; onSelect: (asset: ReferenceAsset) => void };
 }
 
 export function ReferenceCard({
@@ -17,12 +18,11 @@ export function ReferenceCard({
   onOpen,
   onApprove,
   onReject,
+  extraAction,
 }: ReferenceCardProps) {
   const details = [viewLabel(asset.view), poseLabel(asset.pose), asset.expression].filter(
     (value): value is string => value !== null && value !== "",
   );
-  const canApprove = asset.status === "draft" || asset.status === "rejected";
-  const canReject = asset.status === "draft" || asset.status === "approved";
   const size =
     asset.width !== null && asset.height !== null
       ? `${asset.width}×${asset.height}`
@@ -46,6 +46,7 @@ export function ReferenceCard({
       <div className="reference__meta">
         <StatusBadge status={asset.status} />
         <AlphaBadge hasAlpha={asset.has_alpha} />
+        {asset.role === "primary" && <span className="badge badge--ok">основной</span>}
       </div>
 
       {details.length > 0 && <p className="muted">{details.join(" · ")}</p>}
@@ -59,7 +60,17 @@ export function ReferenceCard({
         >
           Открыть
         </button>
-        {canApprove && (
+        {extraAction !== undefined && (
+          <button
+            type="button"
+            className="button button--small"
+            disabled={pending}
+            onClick={() => extraAction.onSelect(asset)}
+          >
+            {extraAction.label}
+          </button>
+        )}
+        {canApproveReference(asset.status) && (
           <button
             type="button"
             className="button button--small button--ok"
@@ -69,7 +80,7 @@ export function ReferenceCard({
             {pending ? "…" : "Утвердить"}
           </button>
         )}
-        {canReject && (
+        {canRejectReference(asset.status) && (
           <button
             type="button"
             className="button button--small button--danger"

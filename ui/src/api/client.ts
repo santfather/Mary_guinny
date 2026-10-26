@@ -9,9 +9,10 @@ import type {
   CompositionSummary,
   KeyframeResult,
   LayoutExport,
-  LocationSummary,
+  LibraryEntity,
+  LibraryEntityDetail,
+  LibraryKind,
   Project,
-  PropSummary,
   ReferenceAsset,
   ReferenceFilters,
   RenderQueued,
@@ -126,6 +127,79 @@ function query(params: Record<string, string | undefined>): string {
   return text ? `?${text}` : "";
 }
 
+function uploadReference(
+  projectId: string,
+  params: ReferenceUploadParams,
+  file: File,
+): Promise<ReferenceAsset> {
+  return fetch(
+    `/api/projects/${projectId}/references${query({
+      kind: params.kind,
+      character_id: params.character_id,
+      location_id: params.location_id,
+      prop_id: params.prop_id,
+      view: params.view,
+      pose: params.pose,
+      role: params.role,
+    })}`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    },
+  ).then(parse<ReferenceAsset>);
+}
+
+async function uploadReferences(
+  projectId: string,
+  params: ReferenceUploadParams,
+  files: File[],
+): Promise<ReferenceAsset[]> {
+  const uploaded: ReferenceAsset[] = [];
+  for (const file of files) {
+    uploaded.push(await uploadReference(projectId, params, file));
+  }
+  return uploaded;
+}
+
+export interface LibraryApi {
+  list: (projectId: string) => Promise<LibraryEntity[]>;
+  get: (id: string) => Promise<LibraryEntityDetail>;
+  create: (projectId: string, body: { name: string; description?: string }) => Promise<LibraryEntity>;
+  update: (id: string, body: { name?: string; description?: string | null }) => Promise<LibraryEntity>;
+}
+
+export interface LibraryUploadTarget {
+  kind: string;
+  ownerParam: "location_id" | "prop_id";
+}
+
+/** Локации и предметы отличаются только путём API и полем-владельцем референса. */
+export const libraryApi: Record<LibraryKind, LibraryApi & LibraryUploadTarget> = {
+  location: {
+    list: (projectId) =>
+      request<LibraryEntity[]>(`/api/projects/${projectId}/locations`),
+    get: (id) => request<LibraryEntityDetail>(`/api/locations/${id}`),
+    create: (projectId, body) =>
+      send<LibraryEntity>(`/api/projects/${projectId}/locations`, "POST", body),
+    update: (id, body) => send<LibraryEntity>(`/api/locations/${id}`, "PATCH", body),
+    kind: "location_reference",
+    ownerParam: "location_id",
+  },
+  prop: {
+    list: (projectId) => request<LibraryEntity[]>(`/api/projects/${projectId}/props`),
+    get: (id) => request<LibraryEntityDetail>(`/api/props/${id}`),
+    create: (projectId, body) =>
+      send<LibraryEntity>(`/api/projects/${projectId}/props`, "POST", body),
+    update: (id, body) => send<LibraryEntity>(`/api/props/${id}`, "PATCH", body),
+    kind: "prop_reference",
+    ownerParam: "prop_id",
+  },
+};
+
 export const api = {
   projects: () => request<Project[]>("/api/projects"),
 
@@ -143,12 +217,6 @@ export const api = {
       `/api/characters/${characterId}/references${referenceQuery(filters)}`,
     ),
 
-  locations: (projectId: string) =>
-    request<LocationSummary[]>(`/api/projects/${projectId}/locations`),
-
-  props: (projectId: string) =>
-    request<PropSummary[]>(`/api/projects/${projectId}/props`),
-
   projectReferences: (projectId: string) =>
     request<ReferenceAsset[]>(`/api/projects/${projectId}/references`),
 
@@ -165,30 +233,9 @@ export const api = {
   relabel: (referenceId: string, body: ReferenceMeta) =>
     send<ReferenceAsset>(`/api/reference-assets/${referenceId}`, "PATCH", body),
 
-  uploadReference: (
-    projectId: string,
-    params: ReferenceUploadParams,
-    file: File,
-  ) =>
-    fetch(
-      `/api/projects/${projectId}/references${query({
-        kind: params.kind,
-        character_id: params.character_id,
-        location_id: params.location_id,
-        prop_id: params.prop_id,
-        view: params.view,
-        pose: params.pose,
-        role: params.role,
-      })}`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": file.type || "application/octet-stream",
-        },
-        body: file,
-      },
-    ).then(parse<ReferenceAsset>),
+  uploadReference,
+
+  uploadReferences,
 
   scenes: (projectId: string) =>
     request<SceneSummary[]>(`/api/projects/${projectId}/scenes`),

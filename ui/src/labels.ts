@@ -100,6 +100,14 @@ export function referenceKindLabel(kind: string): string {
   return REFERENCE_KIND_LABELS[kind] ?? kind;
 }
 
+export function canApproveReference(status: string): boolean {
+  return status === "draft" || status === "rejected";
+}
+
+export function canRejectReference(status: string): boolean {
+  return status === "draft" || status === "approved";
+}
+
 export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status;
 }
