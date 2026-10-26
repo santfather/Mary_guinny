@@ -8,12 +8,17 @@ import type {
   CompositionRender,
   CompositionSummary,
   KeyframeResult,
+  LayoutExport,
   LocationSummary,
   Project,
   PropSummary,
   ReferenceAsset,
   ReferenceFilters,
   RenderQueued,
+  ScenePlan,
+  ScenePlanCandidate,
+  ScenePlanGenerateRequest,
+  ScenePlanWrite,
   SceneSummary,
   ShotDetail,
   ShotReference,
@@ -32,6 +37,7 @@ export class ApiError extends Error {
 
 const DETAIL_MESSAGES: Record<string, string> = {
   render_already_active: "Рендер уже запущен",
+  duplicate_reference: "Такой файл уже загружен в проект",
 };
 
 function describeDetail(detail: unknown): string {
@@ -94,6 +100,32 @@ export interface CompositionWrite {
   layers: CompositionLayerInput[];
 }
 
+export interface ReferenceUploadParams {
+  kind: string;
+  character_id?: string;
+  location_id?: string;
+  prop_id?: string;
+  view?: string;
+  pose?: string;
+  role?: string;
+}
+
+export interface ReferenceMeta {
+  view?: string;
+  pose?: string;
+  expression?: string;
+  role?: string;
+}
+
+function query(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value !== "") search.set(key, value);
+  }
+  const text = search.toString();
+  return text ? `?${text}` : "";
+}
+
 export const api = {
   projects: () => request<Project[]>("/api/projects"),
 
@@ -129,6 +161,34 @@ export const api = {
     request<ReferenceAsset>(`/api/reference-assets/${referenceId}/reject`, {
       method: "POST",
     }),
+
+  relabel: (referenceId: string, body: ReferenceMeta) =>
+    send<ReferenceAsset>(`/api/reference-assets/${referenceId}`, "PATCH", body),
+
+  uploadReference: (
+    projectId: string,
+    params: ReferenceUploadParams,
+    file: File,
+  ) =>
+    fetch(
+      `/api/projects/${projectId}/references${query({
+        kind: params.kind,
+        character_id: params.character_id,
+        location_id: params.location_id,
+        prop_id: params.prop_id,
+        view: params.view,
+        pose: params.pose,
+        role: params.role,
+      })}`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      },
+    ).then(parse<ReferenceAsset>),
 
   scenes: (projectId: string) =>
     request<SceneSummary[]>(`/api/projects/${projectId}/scenes`),
@@ -183,6 +243,47 @@ export const api = {
     send<KeyframeResult>(`/api/shots/${shotId}/keyframe`, "POST", {
       composition_revision: compositionRevision,
     }),
+
+  exportLayout: (shotId: string, revision: number, size: number, mode: string) =>
+    send<LayoutExport>(
+      `/api/shots/${shotId}/compositions/${revision}/export`,
+      "POST",
+      { size, mode },
+    ),
+
+  scenePlans: (shotId: string) =>
+    request<ScenePlan[]>(`/api/shots/${shotId}/scene-plans`),
+
+  generateScenePlan: (shotId: string, body: ScenePlanGenerateRequest) =>
+    send<ScenePlanCandidate>(`/api/shots/${shotId}/scene-plans/generate`, "POST", body),
+
+  createScenePlan: (
+    shotId: string,
+    body: {
+      plan: ScenePlanWrite;
+      source: string;
+      warnings: { code: string; message: string }[];
+    },
+  ) => send<ScenePlan>(`/api/shots/${shotId}/scene-plans`, "POST", body),
+
+  updateScenePlan: (shotId: string, revision: number, plan: ScenePlanWrite) =>
+    send<ScenePlan>(`/api/shots/${shotId}/scene-plans/${revision}`, "PUT", plan),
+
+  approveScenePlan: (shotId: string, revision: number) =>
+    request<ScenePlan>(`/api/shots/${shotId}/scene-plans/${revision}/approve`, {
+      method: "POST",
+    }),
+
+  supersedeScenePlan: (shotId: string, revision: number) =>
+    request<ScenePlan>(`/api/shots/${shotId}/scene-plans/${revision}/supersede`, {
+      method: "POST",
+    }),
+
+  compositionFromPlan: (shotId: string, revision: number) =>
+    request<Composition>(
+      `/api/shots/${shotId}/scene-plans/${revision}/composition`,
+      { method: "POST" },
+    ),
 
   promoteKeyframe: (shotId: string, attemptId: string) =>
     request<ShotSummary>(

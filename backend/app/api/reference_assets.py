@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session, get_store
-from app.api.schemas import ReferenceOut
+from app.api.schemas import ReferenceMetaUpdate, ReferenceOut
 from app.models import ReferenceAsset
 from app.storage import BlobStore, StorageError
 
@@ -77,6 +77,27 @@ def _review(
         raise HTTPException(
             status_code=409, detail="database rejected the reference transition"
         ) from error
+    session.refresh(asset)
+    return ReferenceOut.from_asset(asset)
+
+
+@router.patch("/{asset_id}", response_model=ReferenceOut)
+def update_reference_asset(
+    asset_id: uuid.UUID,
+    payload: ReferenceMetaUpdate,
+    session: Session = Depends(get_session),
+) -> ReferenceOut:
+    """Разметка до утверждения; approved-референс неизменяем (S15)."""
+
+    asset = _require_asset(session, asset_id)
+    if asset.status not in {"draft", "rejected"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot relabel reference in status '{asset.status}'",
+        )
+    for field in payload.model_fields_set:
+        setattr(asset, field, getattr(payload, field))
+    session.commit()
     session.refresh(asset)
     return ReferenceOut.from_asset(asset)
 

@@ -22,6 +22,9 @@ export interface ReferenceAsset {
   kind: string;
   status: string;
   role: string | null;
+  character_id: string | null;
+  location_id: string | null;
+  prop_id: string | null;
   view: string | null;
   pose: string | null;
   expression: string | null;
@@ -127,6 +130,8 @@ export interface CompositionSummary {
   layer_count: number;
   preview_artifact_id: string | null;
   preview_content_url: string | null;
+  source_plan_id: string | null;
+  layout_mockup: boolean;
   created_at: string;
   approved_at: string | null;
 }
@@ -149,6 +154,7 @@ export interface CompositionRender {
   height: number;
   preview_artifact_id: string | null;
   warnings: CompositionWarning[];
+  is_layout_mockup: boolean;
 }
 
 export interface Attempt {
@@ -160,6 +166,7 @@ export interface Attempt {
   artifact_id: string | null;
   artifact_content_url: string | null;
   composition_revision: number | null;
+  visual_plan_revision: number | null;
 }
 
 export interface KeyframeResult {
@@ -181,4 +188,93 @@ export interface ShotDetail extends ShotSummary {
   references: ShotReference[];
   composition_revisions: CompositionSummary[];
   attempts: Attempt[];
+}
+
+export type PlanRole = "character" | "location" | "prop" | "style" | "storyboard";
+export type CameraFraming = "wide" | "medium" | "close_up" | "other";
+export type CameraMovement =
+  | "static"
+  | "pan"
+  | "tilt"
+  | "dolly"
+  | "zoom"
+  | "handheld"
+  | "other";
+
+export interface PlanReference {
+  asset_id: string;
+  role: PlanRole;
+  entity_id: string | null;
+  alias: string;
+}
+
+export interface PlanInitialState {
+  subject: string;
+  position: string;
+  action: string;
+}
+
+export interface PlanActionBeat {
+  order: number;
+  subject: string;
+  action: string;
+  target: string | null;
+}
+
+export interface ScenePlanWrite {
+  canvas: { width: number; height: number };
+  references: PlanReference[];
+  camera: { framing: CameraFraming; movement: CameraMovement };
+  initial_state: PlanInitialState[];
+  action_beats: PlanActionBeat[];
+  constraints: {
+    preserve_character_identity: boolean;
+    preserve_location_layout: boolean;
+    no_unreferenced_characters: boolean;
+  };
+  motion_prompt: string;
+  needs_review: boolean;
+}
+
+export interface ScenePlanWarning {
+  code: string;
+  message: string;
+}
+
+export interface ScenePlan {
+  id: string;
+  project_id: string;
+  shot_id: string;
+  revision: number;
+  schema_version: number;
+  status: string;
+  source: string;
+  plan: ScenePlanWrite;
+  warnings: ScenePlanWarning[];
+  created_at: string;
+  approved_at: string | null;
+}
+
+export interface ScenePlanCandidate {
+  plan: ScenePlanWrite;
+  warnings: ScenePlanWarning[];
+  source: string;
+}
+
+export interface ScenePlanGenerateRequest {
+  action: string;
+  references: PlanReference[];
+  camera: { framing: CameraFraming; movement: CameraMovement };
+  canvas: { width: number; height: number };
+  use_vision: boolean;
+}
+
+export interface LayoutExport {
+  artifact_id: string;
+  content_url: string;
+  size: number;
+  mode: string;
+  source_composition_revision: number;
+  source_artifact_id: string;
+  is_layout_mockup: boolean;
 }

@@ -1,7 +1,7 @@
 # Roadmap Mary Studio
 
-> **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02 и
-> WP-03 выполнены (2026-10-26), WP-04 и далее не начаты.
+> **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02,
+> WP-03, WP-04, WP-05 и WP-05A выполнены (2026-10-26); WP-05B и WP-06 и далее не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
 > **Принцип:** маленькие проверяемые пакеты; каждый следующий начинается только после
@@ -358,6 +358,92 @@ lease/heartbeat (они в WP-06). UI: `#/shots` и `#/shots/{id}` — сцен�
 сценарий в браузере: сцена → шот → привязка approved-референса → ревизия 512×768 →
 render (PNG) → approve → keyframe → promote (стартовый кадр подтверждён) → повторный
 рендер шота отклонён с `render_already_active`; ошибок консоли и 5xx нет.
+
+---
+
+### WP-05A. Visual Scene Plan
+
+**Цель:** связать реальные изображения с ролями и действиями явным контрактом
+(`plan → composition → attempt → artifact`), а не только автоматически составленным
+текстовым prompt.
+
+**Объём:**
+
+- Версионируемый Visual Scene Plan на шот: canvas, camera, references с ролями и alias,
+  `initial_state`, `action_beats`, `constraints`, `motion_prompt`, `needs_review`.
+- Загрузка реальных референсов PNG/JPEG: `POST /api/projects/{id}/references` в
+  существующий storage (content-addressed, SHA256, MIME и лимиты, проектная изоляция,
+  дедупликация), статус `draft` → ручной `approve`; новый механизм хранения не создаётся.
+- Генерация черновика плана через `gemma3:4b` (vision) как **советующий** источник +
+  детерминированный fallback; результат всегда требует ручной проверки.
+- Approve/supersede плана с неизменяемостью approved (S15-триггер).
+- Детерминированная передача плана в существующий композитор (draft-ревизия,
+  `shot_compositions.source_plan_id`), provenance в `render_attempts.parameters`.
+- Пометка `layout mockup`, если непрозрачный персонаж закрывает фон; matting не входит.
+- Экспорт layout 512×512 для LTX PoC с явным `crop`/`pad` без растяжения.
+- UI: панель плана на странице шота, пикер референсов с обязательными входами,
+  approve front-референса, история ревизий, экспорт.
+
+**Миграции:** `0005_visual_scene_plans` — таблица `visual_scene_plans` (S19), частичный
+уникальный индекс one-approved, триггер S15, nullable `shot_compositions.source_plan_id`
+с FK и индексом. Обратима (`downgrade` удаляет FK, колонку, триггер, индексы и таблицу).
+
+**Зависит:** WP-05; S19.
+**DoD:** план создаётся/правится/утверждается; approved-план неизменяем; композиция из
+плана сохраняет `source_plan_id`; keyframe-попытка фиксирует `visual_plan_revision`;
+непрозрачные слои дают `layout mockup`; экспорт 512×512 не растягивает изображение;
+vision-сбой не блокирует ручной путь.
+**Проверка:** backend-тесты (схема, иммутабельность, API, planner, композиция из плана,
+экспорт), legacy 15 тестов, `alembic check`, `npm run build`, браузерный сценарий
+«2 персонажа + локация».
+**Не делать:** запуск LTX/видео, очередь и worker, matting/segmentation, автоматический
+approve плана/композиции/кадра.
+
+**Состояние:** выполнен 2026-10-26. Backend: миграция `0005_visual_scene_plans`;
+`app/planner.py` (skeleton, vision-анализ, нормализация, `source ∈ manual|llm|fallback`);
+`app/api/scene_plans.py` (list/create/get/put/generate/approve/supersede/composition,
+детерминированная раскладка слоёв); `POST /api/projects/{id}/references`;
+`app/api/shot_schemas.py` — `ReferenceOut` с владельцами ассета. Композитор помечает
+результат `is_layout_mockup` (`layer_without_alpha`, `opaque_character_reference`).
+Экспорт layout: 512×512, `crop` или `pad`. UI: `ScenePlanPanel.tsx`, `ScenePlanEditor.tsx`,
+`ReferencePicker.tsx`, изменения `ShotDetailPage.tsx`, `CompositionPreview.tsx`,
+`types.ts`, `styles.css`.
+Проверки: `uv run pytest -q` → 123 passed; legacy → 15 passed;
+`uv run alembic check` — no new upgrade operations; `npm run build` — успешно.
+Приёмка «2 персонажа + локация» выполнена на изолированной БД/сторадже и тестовых
+ассетах с явной маркировкой: upload → relabel `view=front` → ручной approve → generate
+(vision: `source=llm`, `needs_review=true`, предупреждения об alias) → план rev1 →
+approve → композиция 768×512 из 3 слоёв → render (`layout_mockup`) → экспорт 512
+`crop`/`pad` → keyframe → promote (`visual_plan_revision=1`). Браузерный сценарий
+проверен на пустом и заполненном состояниях; временная инфраструктура удалена.
+**Открыто:** в основной БД нет реального изображения локации и approved front-референсов
+Guinness/Marija; `gemma3:4b` не распознаёт alias и остаётся советующим источником.
+
+---
+
+### WP-05B. Multi-reference video PoC
+
+**Цель:** проверить на реальном LTX, что даёт keyframe, собранный из нескольких
+референсов, и зафиксировать ограничения до автоматизации.
+
+**Объём:**
+
+- Взять утверждённый `layout mockup` и его экспорт 512×512, выполнить один I2V-прогон
+  по API-workflow WP-00A (без очереди и worker).
+- Зафиксировать параметры (seed, кадры, fps, разрешение, модель) и сохранить MP4 как
+  артефакт вручную.
+- Сравнить: один персонаж vs два персонажа + локация; влияние непрозрачных слоёв.
+- Сформулировать вывод: пригоден ли layout как стартовый кадр, нужен ли matting,
+  какой canvas/экспорт выбирать.
+
+**Миграции:** нет.
+**Зависит:** WP-05A; реальные approved-референсы и изображение локации.
+**DoD:** один MP4 получен и просмотрен; параметры и выводы зафиксированы; решение о
+matting/изменении canvas оформлено предложением.
+**Проверка:** `ffprobe` результата; визуальный просмотр; запись параметров.
+**Не делать:** очередь, worker, автоматизацию, тяжёлые серии прогонов.
+
+**Состояние:** не начат.
 
 ---
 

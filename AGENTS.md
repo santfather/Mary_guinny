@@ -122,5 +122,13 @@
   render-гейт (`POST /api/shots/{id}/render` → pending job); UI `#/shots` и
   `#/shots/{id}` — шоты, референсы, редактор слоёв, render/approve/supersede, стартовый
   кадр. Схема БД не менялась.
+- WP-05A выполнен: миграция `0005_visual_scene_plans` (таблица `visual_scene_plans`,
+  S19; частичный уникальный индекс approved, S15-триггер, `shot_compositions.source_plan_id`),
+  `app/planner.py` (vision `gemma3:4b` как советующий источник + fallback),
+  `app/api/scene_plans.py` (list/create/get/put/generate/approve/supersede/composition),
+  `POST /api/projects/{id}/references`, `layout mockup` и экспорт 512×512 `crop`/`pad`;
+  UI — `ScenePlanPanel.tsx`, `ScenePlanEditor.tsx`, `ReferencePicker.tsx`.
 - Очередь и worker отсутствуют: render-job только ставится в `pending` (WP-06).
-- Тесты: legacy — 15 passed; backend — 81 passed; UI — `npm run build`.
+- WP-05B (multi-reference video PoC) не начат: LTX в WP-05A не запускался.
+- Тесты: legacy — 15 passed; backend — 123 passed; `alembic check` — no new operations;
+  UI — `npm run build`.

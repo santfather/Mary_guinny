@@ -45,6 +45,53 @@ const REFERENCE_KIND_LABELS: Record<string, string> = {
   uploaded: "загружен",
 };
 
+const PLAN_ROLE_LABELS: Record<string, string> = {
+  character: "персонаж",
+  location: "локация",
+  prop: "предмет",
+  style: "стиль",
+  storyboard: "раскадровка",
+};
+
+const FRAMING_LABELS: Record<string, string> = {
+  wide: "общий",
+  medium: "средний",
+  close_up: "крупный",
+  other: "другой",
+};
+
+const MOVEMENT_LABELS: Record<string, string> = {
+  static: "статичная",
+  pan: "панорама",
+  tilt: "наклон",
+  dolly: "тележка",
+  zoom: "зум",
+  handheld: "ручная",
+  other: "другая",
+};
+
+const PLAN_SOURCE_LABELS: Record<string, string> = {
+  manual: "вручную",
+  llm: "vision-предложение",
+  fallback: "fallback",
+};
+
+export function planRoleLabel(role: string): string {
+  return PLAN_ROLE_LABELS[role] ?? role;
+}
+
+export function framingLabel(framing: string): string {
+  return FRAMING_LABELS[framing] ?? framing;
+}
+
+export function movementLabel(movement: string): string {
+  return MOVEMENT_LABELS[movement] ?? movement;
+}
+
+export function planSourceLabel(source: string): string {
+  return PLAN_SOURCE_LABELS[source] ?? source;
+}
+
 export function purposeLabel(purpose: string): string {
   return PURPOSE_LABELS[purpose] ?? purpose;
 }

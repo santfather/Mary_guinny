@@ -202,6 +202,62 @@ shot_composition_layers
 
 Дополнительно к §5.2: `reference_assets.metadata` приводится к `NOT NULL DEFAULT '{}'::jsonb`.
 
+### 3.8. S19. Visual Scene Plan (WP-05A)
+
+Решение принято человеком 2026-10-26 вместе с разрешением на WP-05A.
+Нумерация: S16 уже занят (`character_bible_versions.project_id`), поэтому план сцены —
+**S19**.
+
+```text
+visual_scene_plans
+  id, project_id, shot_id, revision, schema_version,
+  status (draft | approved | superseded),
+  source (manual | llm | fallback),
+  plan (jsonb), warnings (jsonb), created_at, approved_at
+  UNIQUE (shot_id, revision), UNIQUE (project_id, id)
+  CHECK revision >= 1, schema_version >= 1, status/source — по спискам,
+        status <> 'approved' OR approved_at IS NOT NULL
+  INDEX (shot_id, status)
+  UNIQUE INDEX (shot_id) WHERE status = 'approved'
+
+shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE — обычный)
+```
+
+Правила:
+
+1. `plan` — JSONB со `schema_version = 1`: `canvas {width,height}`, `camera {framing,movement}`,
+   `references [{asset_id, role, alias, entity_id}]`, `initial_state`, `action_beats`,
+   `motion_prompt`, `constraints`. Новые поля — только повышением `schema_version`;
+   старые планы не переписываются.
+2. План ссылается на существующие `reference_assets` по `asset_id`; копий изображений,
+   новых механизмов хранения и второго storage нет. Роль и alias живут внутри плана и не
+   меняют `shot_references`/`reference_assets`.
+3. Каждое сохранение изменений создаёт новую ревизию; править можно только `draft`.
+   `approved`-ревизия иммутабельна: триггер `mary_forbid_approved_change()` (S15) навешен
+   на `visual_scene_plans`, разрешён только переход `approved → superseded`.
+4. Единственность approved-плана на шот обеспечивается **БД** (частичный уникальный индекс
+   `uq_visual_scene_plans_one_approved`), а не только сервисом: в отличие от S17, здесь
+   индекс возможен без конфликта с историей. Смена утверждённого плана — только явный
+   `supersede`, не двухшаговое переключение.
+5. Композиция из плана пишет `shot_compositions.source_plan_id`; правка композиции не
+   меняет план, правка плана не меняет уже созданную композицию. Происхождение цепочки
+   `plan → composition → attempt → artifact` восстанавливается из БД.
+6. Vision (`gemma3:4b`) — **только советующий источник**. Его вывод всегда даёт `source`
+   и предупреждения; при сомнении/недоступности ставится `needs_review = true` и
+   предлагается ручной ввод. Автоматического `approved` плана нет. Новые модели не
+   скачиваются; модель должна быть уже установлена и реально принимать изображения.
+7. Непрозрачный персонаж, закрывающий фон, помечает результат как `layout mockup`
+   (`is_layout_mockup`), а не финальный keyframe. Matting/сегментация — отдельный
+   эксперимент, в WP-05A не реализуются.
+8. Canvas по умолчанию 768×512. Для LTX PoC — отдельный экспорт 512×512 с явным выбором
+   `crop` или `pad` (без растяжения); параметры экспорта сохраняются рядом с артефактом.
+9. Утверждённые ранее артефакты (референсы, композиции, кадры) задним числом не
+   изменяются: план создаёт новые ревизии, а не правит прошлые.
+
+**Что это даёт:** реальные изображения связываются с ролями и действиями явным
+контрактом, а не только автоматически составленным текстовым prompt; при этом остаётся
+прослеживаемость и ручное подтверждение.
+
 ---
 
 ## 4. Утверждённые изменения API (A1–A6)
@@ -260,8 +316,9 @@ shot_composition_layers
 | `render_attempts` | `job_id` nullable для `keyframe` | Видео- и postprocess-попытки по-прежнему требуют job |
 | `prompt_revisions` | A: `prompt_type`, `version` | `prompt` сохранён; default `motion` |
 | `episodes` | A: новая таблица; `scenes.episode_id` nullable | Старые пути `/api/projects/{id}/scenes` работают |
-| `shot_compositions` | R: ревизии и слои вместо одной записи | Эндпоинт получает `revision`; старый одиночный доступ не сохраняется |
+| `shot_compositions` | R: ревизии и слои вместо одной записи; A: `source_plan_id` nullable | Эндпоинт получает `revision`; старый одиночный доступ не сохраняется; композиции без плана валидны |
 | `shots` | A: `start_keyframe_*` | `approved_attempt_id` остаётся для видео-версии |
+| `visual_scene_plans` | A: новая таблица (S19) | План необязателен; существующие шоты и композиции не меняются |
 | API | A: новые эндпоинты; A5 переработан | Существующие эндпоинты v1.3 сохраняют семантику |
 
 **Правило:** baseline v1.3 не редактируется. Любое расхождение фиксируется здесь и в
@@ -288,3 +345,4 @@ shot_composition_layers
 |---|---|
 | 2026-10-26 | Первая редакция: P1–P4, S1–S12, A1–A6, D1–D8 утверждены; зафиксированы инварианты S8/S11/S12 |
 | 2026-10-26 | S13–S18: уточнения перед WP-02 (статусы референсов, `purpose`, триггеры иммутабельности, `project_id` в bible, единственность approved-ревизии, `characters.kind`) |
+| 2026-10-26 | S19: Visual Scene Plan (WP-05A) — таблица `visual_scene_plans`, JSONB-план, триггер S15, one-approved индекс, `shot_compositions.source_plan_id`, `layout mockup`, vision как советующий источник |

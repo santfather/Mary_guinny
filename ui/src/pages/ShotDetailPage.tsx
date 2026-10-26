@@ -4,11 +4,14 @@ import { api } from "../api/client";
 import type {
   Composition,
   CompositionRender,
+  LayoutExport,
   ReferenceAsset,
   ShotDetail,
 } from "../api/types";
 import { CompositionEditor } from "../components/CompositionEditor";
 import { CompositionPreview } from "../components/CompositionPreview";
+import { ReferencePicker } from "../components/ReferencePicker";
+import { ScenePlanPanel } from "../components/ScenePlanPanel";
 import { ShotReferences } from "../components/ShotReferences";
 import { StateView } from "../components/StateView";
 import { StatusBadge } from "../components/StatusBadge";
@@ -54,6 +57,7 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
 
   const [editing, setEditing] = useState<Composition | null | "new">(null);
   const [rendered, setRendered] = useState<Record<number, CompositionRender>>({});
+  const [exports, setExports] = useState<Record<number, LayoutExport>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -96,6 +100,18 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
         setRendered((current) => ({
           ...current,
           [revision]: result as CompositionRender,
+        })),
+    );
+  }
+
+  function exportLayout(revision: number, size: number, mode: "crop" | "pad"): void {
+    void run(
+      `export-${revision}`,
+      () => api.exportLayout(shot.id, revision, size, mode),
+      (result) =>
+        setExports((current) => ({
+          ...current,
+          [revision]: result as LayoutExport,
         })),
     );
   }
@@ -173,6 +189,12 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                 ? "Нет утверждённой ревизии композиции с предпросмотром."
                 : `Утверждена ревизия ${approvedRevision.revision}.`}
             </p>
+            {approvedRevision?.layout_mockup === true && (
+              <p className="warn">
+                Утверждённая композиция помечена как layout mockup: непрозрачный персонаж
+                закрывает фон. Это не финальный keyframe — нужен отдельный matting.
+              </p>
+            )}
             <div className="reference__actions">
               <button
                 type="button"
@@ -206,6 +228,14 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
         assets={availableAssets}
         onChanged={onReload}
       />
+
+      <ReferencePicker
+        projectId={shot.project_id}
+        assets={assets}
+        onChanged={references.reload}
+      />
+
+      <ScenePlanPanel shotId={shot.id} assets={availableAssets} onChanged={onReload} />
 
       <section className="panel">
         <div className="panel__head">
@@ -246,9 +276,11 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                 key={composition.revision}
                 composition={composition}
                 rendered={rendered[composition.revision] ?? null}
+                exported={exports[composition.revision] ?? null}
                 busy={busy !== null}
                 onEdit={() => edit(composition.revision)}
                 onRender={() => render(composition.revision)}
+                onExport={(size, mode) => exportLayout(composition.revision, size, mode)}
                 onApprove={() =>
                   void run(`approve-${composition.revision}`, () =>
                     api.approveComposition(shot.id, composition.revision),
@@ -290,6 +322,9 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                     <StatusBadge status={attempt.status} />
                     {attempt.composition_revision !== null && (
                       <span className="muted">ревизия {attempt.composition_revision}</span>
+                    )}
+                    {attempt.visual_plan_revision !== null && (
+                      <span className="muted">план {attempt.visual_plan_revision}</span>
                     )}
                     {attempt.job_id !== null && (
                       <span className="muted mono">job {attempt.job_id.slice(0, 8)}</span>

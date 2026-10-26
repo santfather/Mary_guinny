@@ -2,10 +2,24 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models import CharacterBibleVersion, ReferenceAsset
+
+ReferenceView = Literal["front", "side", "three_quarter", "back", "other"]
+ReferencePose = Literal["stand", "sit", "walk", "lie", "sleep", "custom"]
+
+
+class ReferenceMetaUpdate(BaseModel):
+    """Ручная разметка неутверждённого референса (front-референс и т.п.)."""
+
+    view: ReferenceView | None = None
+    pose: ReferencePose | None = None
+    expression: str | None = Field(default=None, max_length=200)
+    role: str | None = Field(default=None, max_length=64)
+
 
 
 class ProjectOut(BaseModel):
@@ -55,6 +69,9 @@ class ReferenceOut(BaseModel):
     kind: str
     status: str
     role: str | None
+    character_id: uuid.UUID | None
+    location_id: uuid.UUID | None
+    prop_id: uuid.UUID | None
     view: str | None
     pose: str | None
     expression: str | None
@@ -75,6 +92,9 @@ class ReferenceOut(BaseModel):
             kind=asset.kind,
             status=asset.status,
             role=asset.role,
+            character_id=asset.character_id,
+            location_id=asset.location_id,
+            prop_id=asset.prop_id,
             view=asset.view,
             pose=asset.pose,
             expression=asset.expression,

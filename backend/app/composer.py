@@ -196,3 +196,45 @@ def _opaque_warning(layer: CompositionLayer) -> CompositionWarning:
         z_index=layer.z_index,
         reference_asset_id=layer.reference_asset_id,
     )
+
+
+def export_square(data: bytes, *, size: int, mode: str) -> bytes:
+    """Готовит квадратный экспорт для LTX без искажения пропорций.
+
+    `crop` — центральный кроп (изображение должно быть не меньше стороны),
+    `pad` — равномерное уменьшение с прозрачными полями. Растяжения нет.
+    """
+
+    if size <= 0:
+        raise CompositionError("export size must be positive")
+    try:
+        with Image.open(io.BytesIO(data)) as opened:
+            image = opened.convert("RGBA")
+    except (UnidentifiedImageError, OSError) as error:
+        raise CompositionError("export source cannot be decoded") from error
+
+    if mode == "crop":
+        if image.width < size or image.height < size:
+            raise CompositionError(
+                f"source is smaller than {size}px; use padding instead of cropping"
+            )
+        left = (image.width - size) // 2
+        top = (image.height - size) // 2
+        canvas = image.crop((left, top, left + size, top + size))
+    elif mode == "pad":
+        ratio = min(size / image.width, size / image.height)
+        resized = image.resize(
+            (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.alpha_composite(
+            resized,
+            dest=((size - resized.width) // 2, (size - resized.height) // 2),
+        )
+    else:
+        raise CompositionError(f"unsupported export mode: {mode!r}")
+
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    return buffer.getvalue()

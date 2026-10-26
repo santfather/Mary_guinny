@@ -37,6 +37,7 @@ from app.models import (
     ShotCompositionLayer,
     ShotReference,
     ReferenceAsset,
+    VisualScenePlan,
 )
 
 router = APIRouter(prefix="/api", tags=["shots"])
@@ -106,6 +107,28 @@ def reference_links(session: Session, shot_id: uuid.UUID) -> list[ShotReferenceO
     ]
 
 
+def layout_mockup_ids(
+    session: Session, composition_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Композиции, где непрозрачный персонаж перекрывает фон (layout mockup)."""
+
+    if not composition_ids:
+        return set()
+    rows = session.execute(
+        select(ShotCompositionLayer.composition_id)
+        .join(
+            ReferenceAsset,
+            ReferenceAsset.id == ShotCompositionLayer.reference_asset_id,
+        )
+        .where(
+            ShotCompositionLayer.composition_id.in_(composition_ids),
+            ReferenceAsset.kind == "character_reference",
+            ReferenceAsset.metadata_json["has_alpha"].astext == "false",
+        )
+    )
+    return {row[0] for row in rows}
+
+
 def composition_summaries(
     session: Session, shot_id: uuid.UUID
 ) -> list[CompositionSummary]:
@@ -118,21 +141,23 @@ def composition_summaries(
     )
     if not compositions:
         return []
+    composition_ids = [composition.id for composition in compositions]
     counts = dict(
         session.execute(
             select(
                 ShotCompositionLayer.composition_id, func.count(ShotCompositionLayer.id)
             )
-            .where(
-                ShotCompositionLayer.composition_id.in_(
-                    [composition.id for composition in compositions]
-                )
-            )
+            .where(ShotCompositionLayer.composition_id.in_(composition_ids))
             .group_by(ShotCompositionLayer.composition_id)
         ).all()
     )
+    mockups = layout_mockup_ids(session, composition_ids)
     return [
-        CompositionSummary.from_composition(composition, counts.get(composition.id, 0))
+        CompositionSummary.from_composition(
+            composition,
+            counts.get(composition.id, 0),
+            layout_mockup=composition.id in mockups,
+        )
         for composition in compositions
     ]
 
@@ -369,6 +394,22 @@ def list_attempts(
     return attempt_outs(session, shot_id)
 
 
+def _keyframe_parameters(
+    session: Session, composition: ShotComposition
+) -> dict[str, object]:
+    parameters: dict[str, object] = {
+        "composition_id": str(composition.id),
+        "composition_revision": composition.revision,
+    }
+    if composition.source_plan_id is not None:
+        plan = session.get(VisualScenePlan, composition.source_plan_id)
+        if plan is not None:
+            # Проверяемое происхождение: artifact → attempt → composition → plan.
+            parameters["visual_plan_id"] = str(plan.id)
+            parameters["visual_plan_revision"] = plan.revision
+    return parameters
+
+
 @router.post(
     "/shots/{shot_id}/keyframe",
     response_model=KeyframeOut,
@@ -414,10 +455,7 @@ def create_keyframe(
         status="completed",
         input_artifact_ids=[str(preview.id)],
         workflow_version="composition-v1",
-        parameters={
-            "composition_id": str(composition.id),
-            "composition_revision": composition.revision,
-        },
+        parameters=_keyframe_parameters(session, composition),
     )
     session.add(attempt)
     session.flush()

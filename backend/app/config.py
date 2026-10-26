@@ -20,3 +20,12 @@ class Settings(BaseSettings):
     # D2: лимиты синхронного композитора PNG (WP-05).
     composition_max_pixels: int = 16 * 1024 * 1024
     composition_max_layers: int = 16
+    # WP-05A: загрузка референсов (тот же BlobStore, что и у остальных ассетов).
+    reference_upload_max_bytes: int = 32 * 1024 * 1024
+    reference_max_pixels: int = 64 * 1024 * 1024
+    # WP-05A: планировщик сцены. Vision — только советующий источник.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    planner_model: str = "gemma3:4b"
+    planner_timeout_s: float = 120.0
+    planner_max_images: int = 3
+    planner_image_max_side: int = 768

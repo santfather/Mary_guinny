@@ -47,21 +47,21 @@ def _session(request: Request) -> Session:
     return Session(request.app.state.engine)
 
 
-async def _read_body_with_limit(request: Request) -> bytes:
-    """Читает тело потоково, не буферизуя больше MAX_UPLOAD_BYTES."""
+async def read_body_with_limit(request: Request, limit: int = MAX_UPLOAD_BYTES) -> bytes:
+    """Читает тело потоково, не буферизуя больше `limit` байт."""
 
     declared = request.headers.get("content-length")
     if declared is not None:
         if not declared.isdigit():
             raise HTTPException(status_code=400, detail="invalid Content-Length")
-        if int(declared) > MAX_UPLOAD_BYTES:
+        if int(declared) > limit:
             raise HTTPException(status_code=413, detail="artifact is too large")
 
     chunks: list[bytes] = []
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
-        if total > MAX_UPLOAD_BYTES:
+        if total > limit:
             raise HTTPException(status_code=413, detail="artifact is too large")
         chunks.append(chunk)
     return b"".join(chunks)
@@ -76,7 +76,7 @@ async def upload_artifact(
 ) -> ArtifactOut:
     """Загрузка артефакта: сервер пересчитывает sha256 и не доверяет заголовку."""
 
-    body = await _read_body_with_limit(request)
+    body = await read_body_with_limit(request, MAX_UPLOAD_BYTES)
     if not body:
         raise HTTPException(status_code=422, detail="empty body")
     digest = hashlib.sha256(body).hexdigest()

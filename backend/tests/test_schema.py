@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "shot_references",
     "shot_compositions",
     "shot_composition_layers",
+    "visual_scene_plans",
 }
 
 

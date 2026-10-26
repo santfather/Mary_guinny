@@ -65,6 +65,8 @@ REFERENCE_VIEWS = ("front", "side", "three_quarter", "back", "other")
 REFERENCE_POSES = ("stand", "sit", "walk", "lie", "sleep", "custom")
 SHOT_REFERENCE_PURPOSES = ("character", "location", "prop", "style", "other")
 COMPOSITION_STATUSES = ("draft", "approved", "superseded")
+VISUAL_PLAN_STATUSES = ("draft", "approved", "superseded")
+VISUAL_PLAN_SOURCES = ("manual", "llm", "fallback")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -588,6 +590,7 @@ class ShotComposition(Base):
             name="ck_shot_compositions_approved_at",
         ),
         Index("ix_shot_compositions_preview_artifact_id", "preview_artifact_id"),
+        Index("ix_shot_compositions_source_plan_id", "source_plan_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -604,6 +607,66 @@ class ShotComposition(Base):
     preview_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("artifacts.id", name="fk_shot_compositions_preview_artifact"),
+    )
+    # WP-05A: происхождение композиции из утверждённого/чернового плана сцены.
+    source_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("visual_scene_plans.id", name="fk_shot_compositions_source_plan"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class VisualScenePlan(Base):
+    """Версионируемый визуальный план шота (S16).
+
+    План хранит только связи с референсами (asset_id/entity_id/alias) и
+    человекочитаемое описание; approved-ревизия неизменяема на уровне БД.
+    """
+
+    __tablename__ = "visual_scene_plans"
+    __table_args__ = (
+        UniqueConstraint(
+            "shot_id", "revision", name="uq_visual_scene_plans_shot_revision"
+        ),
+        UniqueConstraint("project_id", "id", name="uq_visual_scene_plans_project_id"),
+        CheckConstraint("revision >= 1", name="ck_visual_scene_plans_revision_positive"),
+        CheckConstraint(
+            "schema_version >= 1", name="ck_visual_scene_plans_schema_version_positive"
+        ),
+        CheckConstraint(_in_list("status", VISUAL_PLAN_STATUSES), name="ck_visual_scene_plans_status"),
+        CheckConstraint(_in_list("source", VISUAL_PLAN_SOURCES), name="ck_visual_scene_plans_source"),
+        CheckConstraint(
+            "status <> 'approved' OR approved_at IS NOT NULL",
+            name="ck_visual_scene_plans_approved_at",
+        ),
+        Index("ix_visual_scene_plans_shot_status", "shot_id", "status"),
+        Index(
+            "uq_visual_scene_plans_one_approved",
+            "shot_id",
+            unique=True,
+            postgresql_where=text("status = 'approved'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shots.id"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+    plan: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    warnings: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

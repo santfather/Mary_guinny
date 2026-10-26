@@ -150,12 +150,19 @@ class CompositionSummary(BaseModel):
     layer_count: int
     preview_artifact_id: uuid.UUID | None
     preview_content_url: str | None
+    source_plan_id: uuid.UUID | None
+    # True, если непрозрачный персонаж перекрывает фон: это layout mockup.
+    layout_mockup: bool = False
     created_at: datetime
     approved_at: datetime | None
 
     @classmethod
     def from_composition(
-        cls, composition: ShotComposition, layer_count: int
+        cls,
+        composition: ShotComposition,
+        layer_count: int,
+        *,
+        layout_mockup: bool = False,
     ) -> "CompositionSummary":
         preview_id = composition.preview_artifact_id
         return cls(
@@ -168,6 +175,8 @@ class CompositionSummary(BaseModel):
             preview_content_url=(
                 f"/api/artifacts/{preview_id}/content" if preview_id is not None else None
             ),
+            source_plan_id=composition.source_plan_id,
+            layout_mockup=layout_mockup,
             created_at=composition.created_at,
             approved_at=composition.approved_at,
         )
@@ -191,6 +200,7 @@ class CompositionRenderOut(BaseModel):
     height: int
     preview_artifact_id: uuid.UUID | None
     warnings: list[CompositionWarningOut]
+    is_layout_mockup: bool = False
 
 
 class KeyframeCreate(BaseModel):
@@ -214,17 +224,22 @@ class AttemptOut(BaseModel):
     artifact_id: uuid.UUID | None
     artifact_content_url: str | None
     composition_revision: int | None
+    visual_plan_revision: int | None
 
     @classmethod
     def from_attempt(
         cls, attempt: RenderAttempt, artifact_id: uuid.UUID | None
     ) -> "AttemptOut":
         revision: int | None = None
+        plan_revision: int | None = None
         parameters = attempt.parameters
         if isinstance(parameters, dict):
             raw = parameters.get("composition_revision")
             if isinstance(raw, int):
                 revision = raw
+            raw_plan = parameters.get("visual_plan_revision")
+            if isinstance(raw_plan, int):
+                plan_revision = raw_plan
         return cls(
             id=attempt.id,
             kind=attempt.kind,
@@ -236,6 +251,7 @@ class AttemptOut(BaseModel):
                 f"/api/artifacts/{artifact_id}/content" if artifact_id is not None else None
             ),
             composition_revision=revision,
+            visual_plan_revision=plan_revision,
         )
 
 

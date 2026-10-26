@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session, get_settings, get_store
+from app.api.scene_plan_schemas import LayoutExportOut, LayoutExportRequest
 from app.api.schemas import ReferenceOut
 from app.api.shot_schemas import (
     CompositionLayerOut,
@@ -18,8 +19,13 @@ from app.api.shot_schemas import (
     CompositionWarningOut,
     CompositionWrite,
 )
-from app.api.shots import composition_summaries, require_shot, shot_project_id
-from app.composer import CompositionError, CompositionLayer, compose
+from app.api.shots import (
+    composition_summaries,
+    layout_mockup_ids,
+    require_shot,
+    shot_project_id,
+)
+from app.composer import CompositionError, CompositionLayer, compose, export_square
 from app.config import Settings
 from app.models import (
     Artifact,
@@ -27,7 +33,7 @@ from app.models import (
     ShotComposition,
     ShotCompositionLayer,
 )
-from app.storage import BlobStore
+from app.storage import BlobStore, StorageError
 
 router = APIRouter(prefix="/api/shots/{shot_id}/compositions", tags=["compositions"])
 
@@ -93,7 +99,11 @@ def _layer_specs(
     return specs
 
 
-def _composition_out(session: Session, composition: ShotComposition) -> CompositionOut:
+def _is_layout_mockup(session: Session, composition: ShotComposition) -> bool:
+    return composition.id in layout_mockup_ids(session, [composition.id])
+
+
+def composition_out(session: Session, composition: ShotComposition) -> CompositionOut:
     rows = list(
         session.scalars(
             select(ShotCompositionLayer)
@@ -103,12 +113,21 @@ def _composition_out(session: Session, composition: ShotComposition) -> Composit
     )
     assets = _assets_by_id(session, [row.reference_asset_id for row in rows])
     layers: list[CompositionLayerOut] = []
+    layout_mockup = False
     for row in rows:
         asset = assets.get(row.reference_asset_id)
         if asset is None:
             continue
+        if (
+            asset.kind == "character_reference"
+            and (asset.metadata_json or {}).get("has_alpha") is False
+        ):
+            # Непрозрачный персонаж перекрывает фон: честно помечаем layout mockup.
+            layout_mockup = True
         layers.append(CompositionLayerOut.from_layer(row, ReferenceOut.from_asset(asset)))
-    summary = CompositionSummary.from_composition(composition, len(rows))
+    summary = CompositionSummary.from_composition(
+        composition, len(rows), layout_mockup=layout_mockup
+    )
     return CompositionOut(**summary.model_dump(), layers=layers)
 
 
@@ -216,7 +235,7 @@ def create_composition(
             status_code=409, detail="composition revision already exists"
         ) from error
     session.refresh(composition)
-    return _composition_out(session, composition)
+    return composition_out(session, composition)
 
 
 @router.get("/{revision}", response_model=CompositionOut)
@@ -226,7 +245,7 @@ def get_composition(
     session: Session = Depends(get_session),
 ) -> CompositionOut:
     require_shot(session, shot_id)
-    return _composition_out(session, require_composition(session, shot_id, revision))
+    return composition_out(session, require_composition(session, shot_id, revision))
 
 
 @router.put("/{revision}", response_model=CompositionOut)
@@ -253,7 +272,7 @@ def update_composition(
     composition.approved_at = None
     session.commit()
     session.refresh(composition)
-    return _composition_out(session, composition)
+    return composition_out(session, composition)
 
 
 @router.post("/{revision}/render", response_model=CompositionRenderOut)
@@ -314,6 +333,63 @@ def render_composition(
             )
             for warning in result.warnings
         ],
+        is_layout_mockup=any(
+            warning.code == "opaque_character_reference" for warning in result.warnings
+        ),
+    )
+
+
+@router.post("/{revision}/export", response_model=LayoutExportOut)
+def export_layout(
+    shot_id: uuid.UUID,
+    revision: int,
+    payload: LayoutExportRequest,
+    session: Session = Depends(get_session),
+    store: BlobStore = Depends(get_store),
+) -> LayoutExportOut:
+    """Квадратный экспорт превью для LTX PoC: crop или padding, без растяжения."""
+
+    require_shot(session, shot_id)
+    composition = require_composition(session, shot_id, revision)
+    if composition.preview_artifact_id is None:
+        raise HTTPException(
+            status_code=409, detail="render the composition before exporting"
+        )
+    preview = session.get(Artifact, composition.preview_artifact_id)
+    if preview is None:
+        raise HTTPException(status_code=409, detail="composition preview artifact is missing")
+    try:
+        data = store.read_bytes(preview.storage_key)
+    except (StorageError, FileNotFoundError, OSError) as error:
+        raise HTTPException(
+            status_code=409, detail="composition preview content is unavailable"
+        ) from error
+    try:
+        png = export_square(data, size=payload.size, mode=payload.mode)
+    except CompositionError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+    blob = store.put_bytes(png, suffix=".png")
+    artifact = Artifact(
+        source="composition",
+        kind=f"layout_export_{payload.size}_{payload.mode}",
+        shot_composition_id=composition.id,
+        storage_key=blob.storage_key,
+        sha256=blob.sha256,
+        bytes=blob.size,
+        mime_type="image/png",
+    )
+    session.add(artifact)
+    session.commit()
+    session.refresh(artifact)
+    return LayoutExportOut(
+        artifact_id=artifact.id,
+        content_url=f"/api/artifacts/{artifact.id}/content",
+        size=payload.size,
+        mode=payload.mode,
+        source_composition_revision=composition.revision,
+        source_artifact_id=preview.id,
+        is_layout_mockup=_is_layout_mockup(session, composition),
     )
 
 
@@ -326,7 +402,7 @@ def approve_composition(
     require_shot(session, shot_id)
     composition = require_composition(session, shot_id, revision)
     if composition.status == "approved":
-        return _composition_out(session, composition)
+        return composition_out(session, composition)
     if composition.status != "draft":
         raise HTTPException(
             status_code=409, detail="only a draft composition can be approved"
@@ -362,7 +438,7 @@ def approve_composition(
             status_code=409, detail="database rejected the composition transition"
         ) from error
     session.refresh(composition)
-    return _composition_out(session, composition)
+    return composition_out(session, composition)
 
 
 @router.post("/{revision}/supersede", response_model=CompositionOut)
@@ -374,7 +450,7 @@ def supersede_composition(
     require_shot(session, shot_id)
     composition = require_composition(session, shot_id, revision)
     if composition.status == "superseded":
-        return _composition_out(session, composition)
+        return composition_out(session, composition)
     if composition.status != "approved":
         raise HTTPException(
             status_code=409, detail="only an approved composition can be superseded"
@@ -388,4 +464,4 @@ def supersede_composition(
             status_code=409, detail="database rejected the composition transition"
         ) from error
     session.refresh(composition)
-    return _composition_out(session, composition)
+    return composition_out(session, composition)
