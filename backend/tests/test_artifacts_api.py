@@ -75,3 +75,40 @@ def test_download_missing_artifact_returns_404(tmp_path: Path) -> None:
             assert response.status_code == 404
     finally:
         app.state.engine.dispose()
+
+
+def test_upload_rejects_declared_size_over_limit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.api.artifacts.MAX_UPLOAD_BYTES", 16)
+    app = create_app(Settings(storage_root=tmp_path / "storage"))
+    payload = b"x" * 32
+    try:
+        with TestClient(app) as client:
+            response = _upload(client, payload, kind="keyframe")
+            assert response.status_code == 413
+            assert response.json()["detail"] == "artifact is too large"
+    finally:
+        app.state.engine.dispose()
+
+
+def test_upload_rejects_chunked_body_over_limit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.api.artifacts.MAX_UPLOAD_BYTES", 16)
+    app = create_app(Settings(storage_root=tmp_path / "storage"))
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/artifacts",
+                params={"kind": "keyframe"},
+                content=iter([b"a" * 12, b"b" * 12]),
+                headers={
+                    "X-Content-SHA256": "0" * 64,
+                    "Content-Type": "image/png",
+                },
+            )
+            assert response.status_code == 413
+            assert response.json()["detail"] == "artifact is too large"
+    finally:
+        app.state.engine.dispose()
