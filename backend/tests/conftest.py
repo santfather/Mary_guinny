@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections.abc import Callable, Iterator
+from datetime import datetime, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
+from app.api.deps import get_session
 from app.config import Settings
 from app.db import build_engine
+from app.main import create_app
 
 
 @pytest.fixture(scope="session")
@@ -27,6 +34,30 @@ def conn(engine: Engine) -> Iterator[Connection]:
             yield connection
         finally:
             transaction.rollback()
+
+
+@pytest.fixture
+def api_client(conn: Connection, tmp_path) -> Iterator[TestClient]:
+    """Клиент API на транзакции `conn`: изменения откатываются вместе с ней."""
+    app = create_app(Settings(storage_root=tmp_path / "storage"))
+
+    def _session_override() -> Iterator[Session]:
+        session = Session(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_session] = _session_override
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.state.engine.dispose()
 
 
 @pytest.fixture
@@ -137,6 +168,100 @@ def make_asset(conn: Connection) -> Callable[..., uuid.UUID]:
                 "status": status,
                 "storage_key": f"projects/{project_id}/refs/{value}.png",
                 "sha256": sha256 or (uuid.uuid4().hex + uuid.uuid4().hex),
+            },
+        )
+        return value
+
+    return _make
+
+
+@pytest.fixture
+def make_reference(conn: Connection) -> Callable[..., uuid.UUID]:
+    def _make(
+        *,
+        project_id: uuid.UUID,
+        character_id: uuid.UUID | None = None,
+        location_id: uuid.UUID | None = None,
+        prop_id: uuid.UUID | None = None,
+        status: str = "draft",
+        view: str | None = None,
+        pose: str | None = None,
+        expression: str | None = None,
+        storage_key: str | None = None,
+        sha256: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> uuid.UUID:
+        if character_id is not None:
+            kind = "character_reference"
+        elif location_id is not None:
+            kind = "location_reference"
+        elif prop_id is not None:
+            kind = "prop_reference"
+        else:
+            kind = "uploaded"
+
+        value = uuid.uuid4()
+        conn.execute(
+            text(
+                "INSERT INTO reference_assets"
+                " (id, project_id, kind, character_id, location_id, prop_id, status,"
+                "  storage_key, sha256, mime_type, view, pose, expression, metadata,"
+                "  approved_at)"
+                " VALUES (:id, :project_id, :kind, :character_id, :location_id, :prop_id,"
+                "  :status, :storage_key, :sha256, 'image/png', :view, :pose, :expression,"
+                "  CAST(:metadata AS jsonb), :approved_at)"
+            ),
+            {
+                "id": value,
+                "project_id": project_id,
+                "kind": kind,
+                "character_id": character_id,
+                "location_id": location_id,
+                "prop_id": prop_id,
+                "status": status,
+                "storage_key": storage_key
+                or f"blobs/{value.hex[:2]}/{value.hex}.png",
+                "sha256": sha256 or (uuid.uuid4().hex + uuid.uuid4().hex),
+                "view": view,
+                "pose": pose,
+                "expression": expression,
+                "metadata": json.dumps(metadata or {}),
+                "approved_at": datetime.now(timezone.utc)
+                if status == "approved"
+                else None,
+            },
+        )
+        return value
+
+    return _make
+
+
+@pytest.fixture
+def make_bible(conn: Connection) -> Callable[..., uuid.UUID]:
+    def _make(
+        *,
+        project_id: uuid.UUID,
+        character_id: uuid.UUID,
+        version: int = 1,
+        body: str = "# Bible",
+        status: str = "draft",
+    ) -> uuid.UUID:
+        value = uuid.uuid4()
+        conn.execute(
+            text(
+                "INSERT INTO character_bible_versions"
+                " (id, project_id, character_id, version, body, sha256, status, source)"
+                " VALUES (:id, :project_id, :character_id, :version, :body, :sha256,"
+                "  :status, 'import')"
+            ),
+            {
+                "id": value,
+                "project_id": project_id,
+                "character_id": character_id,
+                "version": version,
+                "body": body,
+                "sha256": hashlib.sha256(body.encode()).hexdigest(),
+                "status": status,
             },
         )
         return value

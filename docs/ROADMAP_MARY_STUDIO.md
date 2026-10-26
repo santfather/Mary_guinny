@@ -287,6 +287,20 @@ sha256 34 исходных файлов до/после импорта иден�
 один утверждён; после approve меняется только статус, файлы не перезаписываются.
 **Проверка:** backend-тесты approve/reject; UI-тест или ручная проверка; SSE не нужен.
 
+**Состояние:** выполнен 2026-10-26. Backend: `app/api/projects.py`, `characters.py`,
+`locations.py`, `props.py`, `reference_assets.py`, `deps.py`, `schemas.py`; data-fix CLI
+`python -m app.set_character_kinds` (`guinness → cat`, `marija → human`; меняет только
+`characters.kind`, есть dry-run/apply). UI: `ui/` на React 19 + TypeScript + Vite
+(hash-роутинг, Vite-proxy `/api` → `127.0.0.1:8000`): список персонажей, карточка с bible,
+сетка референсов, фильтры `status/view/pose`, лайтбокс, approve/reject, каталоги локаций
+и предметов, состояния loading/empty/error, предупреждение «Без прозрачности».
+Схема БД не менялась, миграций нет.
+Проверки: `uv run pytest -q` → 67 passed; legacy `pytest` → 15 passed; `npm run build`
+(`tsc --noEmit && vite build`) — успешно. Ручной сценарий в браузере: Guinness — 8 референсов,
+фильтр «Спереди» → 2, комбинация с «Стоит» → пустое состояние, лайтбокс, approve →
+статус «Утверждён» и счётчик «Утверждено 1»; Locations/Props — пустые каталоги; ошибок
+консоли и ответов 4xx/5xx нет. После approve меняются только `status`/`approved_at`.
+
 ---
 
 ### WP-05. Шоты, композиция и стартовый кадр

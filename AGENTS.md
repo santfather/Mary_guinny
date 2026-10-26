@@ -113,5 +113,9 @@
   `python -m app.import_legacy`, `POST /api/artifacts` + `GET /api/artifacts/{id}[/content]`.
   Импорт `characters/` и `episodes/` выполнен, отчёт — `docs/MIGRATION-REPORT.md`;
   оригиналы не перемещались (sha256 до/после совпадают), повторный запуск идемпотентен.
-- Frontend, worker и логика очереди отсутствуют.
-- Тесты: legacy — 15 passed; backend — 51 passed.
+- WP-04 выполнен: API библиотеки (`projects`, `characters`, `bible`, `references`,
+  `locations`, `props`, approve/reject) и data-fix CLI `python -m app.set_character_kinds`;
+  UI `ui/` (React 19 + TypeScript + Vite) — список персонажей, bible, сетка референсов,
+  фильтры, лайтбокс, approve/reject, каталоги локаций и предметов.
+- Worker и логика очереди отсутствуют; frontend — только библиотека (WP-04).
+- Тесты: legacy — 15 passed; backend — 67 passed; UI — `npm run build`.

@@ -8,6 +8,10 @@ __pycache__/
 # Локальный рантайм: копия ComfyUI (~2.3 GB) со своим .git
 runtime/
 
+# UI
+ui/node_modules/
+ui/dist/
+
 # Пользовательские ассеты и результаты рендера — вне Git (DECISIONS.md, D3)
 storage/
 characters/**/*.png
