@@ -101,6 +101,7 @@
 
 - WP-00 выполнен: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ENV-AUDIT.md`, `AGENTS.md`.
 - WP-00B выполнен: git инициализирован, ветка `main`, remote `git@github.com:santfather/Mary_guinny.git`.
+- WP-00C выполнен: 15 passed.
+- WP-00A выполнен: I2V API-workflow `comfyui-workflows/ltx23_mlx_q4_i2v.api.json`, один прогон 512×512/73/24.
 - Backend, frontend, worker, БД и миграции отсутствуют.
-- Тесты: 14 passed, 1 failed (WP-00C).
-- Реальный I2V API-workflow не зафиксирован (WP-00A).
+- Тесты: 15 passed.

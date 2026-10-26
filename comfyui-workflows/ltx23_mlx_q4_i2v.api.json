@@ -1,0 +1,32 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "scene_01_keyframe.png"
+    }
+  },
+  "2": {
+    "class_type": "LTX2MLXModelLoader",
+    "inputs": {
+      "model_dir": "dgrauet/ltx-2.3-mlx-q4",
+      "pipeline_type": "distilled",
+      "low_ram": false,
+      "custom_model_dir": ""
+    }
+  },
+  "3": {
+    "class_type": "LTX2MLXGenerate",
+    "inputs": {
+      "pipeline": ["2", 0],
+      "image": ["1", 0],
+      "prompt": "the cat blinks slowly and twitches an ear, subtle breathing motion, static camera, cinematic lighting",
+      "width": 512,
+      "height": 512,
+      "num_frames": 73,
+      "seed": 42,
+      "cfg_scale": 3.0,
+      "frame_rate": 24.0,
+      "filename_prefix": "ltx2mlx/poc_i2v"
+    }
+  }
+}

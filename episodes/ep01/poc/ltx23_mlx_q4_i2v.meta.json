@@ -1,0 +1,55 @@
+{
+  "workflow_file": "comfyui-workflows/ltx23_mlx_q4_i2v.api.json",
+  "comfyui_version": "0.42.0",
+  "node_pack": "comfyui-ltx2-mlx 0.2.1 (d38b63a)",
+  "model_dir": "dgrauet/ltx-2.3-mlx-q4",
+  "pipeline_type": "distilled",
+  "low_ram": false,
+  "source_image": "episodes/ep01/scenes/scene_01_keyframe.png",
+  "uploaded_image": "scene_01_keyframe.png",
+  "prompt": "the cat blinks slowly and twitches an ear, subtle breathing motion, static camera, cinematic lighting",
+  "width": 512,
+  "height": 512,
+  "num_frames": 73,
+  "frame_rate": 24.0,
+  "seed": 42,
+  "cfg_scale": 3.0,
+  "prompt_id": "971e04b4-8be6-4806-8181-121e7f0d8f86",
+  "submitted_at": "2026-10-26T14:12:42.988934+00:00",
+  "comfyui_output": {
+    "filename": "poc_i2v_00001_.mp4",
+    "subfolder": "ltx2mlx",
+    "type": "output"
+  },
+  "saved_as": "episodes/ep01/poc/ltx23_mlx_q4_i2v.mp4",
+  "notes": [
+    "I2V подтверждён: первый кадр содержит тех же двух котов и тот же стиль, что и исходный PNG.",
+    "SSIM(исходник 512x512, кадр 0) = 0.311, SSIM(кадр 0, кадр 72) = 0.542 — кадр не статичен, движение есть.",
+    "Исходный PNG 768x512 при запросе 512x512 центрируется с обрезкой: кадр выглядит как zoom-in относительно источника.",
+    "Для аспект-совпадения передавать width/height по пропорциям исходника (например 768x512) либо заранее кропать вход до нужного аспекта.",
+    "Аудиопоток в MP4 (aac, 143 кадра) присутствует; для немого видео его наличие нужно учитывать при монтаже и ffmpeg-конвейере."
+  ],
+  "ffprobe": {
+    "format": "mov,mp4,m4a,3gp,3g2,mj2",
+    "duration_s": "3.041667",
+    "size_bytes": "446181",
+    "streams": [
+      {
+        "codec_type": "video",
+        "codec_name": "h264",
+        "width": 512,
+        "height": 512,
+        "avg_frame_rate": "24/1",
+        "nb_frames": "73"
+      },
+      {
+        "codec_type": "audio",
+        "codec_name": "aac",
+        "width": null,
+        "height": null,
+        "avg_frame_rate": "0/0",
+        "nb_frames": "143"
+      }
+    ]
+  }
+}
