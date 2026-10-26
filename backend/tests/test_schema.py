@@ -12,6 +12,13 @@ EXPECTED_TABLES = {
     "render_attempts",
     "artifacts",
     "reference_assets",
+    "characters",
+    "character_bible_versions",
+    "locations",
+    "props",
+    "shot_references",
+    "shot_compositions",
+    "shot_composition_layers",
 }
 
 

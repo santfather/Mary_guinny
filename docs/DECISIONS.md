@@ -186,6 +186,22 @@ shot_composition_layers
 7. Слои ссылаются на конкретные `reference_asset_id`; смена approved-ассета в библиотеке
    не меняет старую ревизию.
 
+### 3.7. Уточнения перед WP-02 (S13–S18)
+
+Утверждены человеком 2026-10-26. Дополняют S1–S9 и закрывают неоднозначности
+`docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md` §5.2 и §5.3.
+
+| ID | Решение | Следствие |
+|---|---|---|
+| S13 | `reference_assets.status`: `draft \| approved \| rejected \| superseded` | §5.2 и §5.3 п.4 согласованы: отзыв утверждения — `approved → superseded`, ошибка приёмки — `approved → rejected` |
+| S14 | `shot_references.purpose`: `character \| location \| prop \| style \| other` | CHECK в БД; расширение набора — отдельной миграцией |
+| S15 | Иммутабельность approved-записей обеспечивается триггерами PostgreSQL | `BEFORE UPDATE OR DELETE` на `reference_assets`, `character_bible_versions`, `shot_compositions`: контент и метаданные неизменны, разрешён только переход `approved → superseded` (для референса также `→ rejected`); удаление approved-записи запрещено |
+| S16 | `character_bible_versions.project_id` — денормализация проекта | Нужна для составного FK `(project_id, character_id) → characters(project_id, id)`; bible чужого проекта невозможен |
+| S17 | Единственность approved-ревизии композиции на шот | Обеспечивается сервисом, не БД; частичный уникальный индекс `approved` не добавляется, переключение ревизии остаётся двухшаговым |
+| S18 | `characters.kind`: `cat \| human \| other`, default `other` | CHECK в БД |
+
+Дополнительно к §5.2: `reference_assets.metadata` приводится к `NOT NULL DEFAULT '{}'::jsonb`.
+
 ---
 
 ## 4. Утверждённые изменения API (A1–A6)
@@ -271,3 +287,4 @@ shot_composition_layers
 | Дата | Изменение |
 |---|---|
 | 2026-10-26 | Первая редакция: P1–P4, S1–S12, A1–A6, D1–D8 утверждены; зафиксированы инварианты S8/S11/S12 |
+| 2026-10-26 | S13–S18: уточнения перед WP-02 (статусы референсов, `purpose`, триггеры иммутабельности, `project_id` в bible, единственность approved-ревизии, `characters.kind`) |

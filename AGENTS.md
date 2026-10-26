@@ -105,5 +105,8 @@
 - WP-00A выполнен: I2V API-workflow `comfyui-workflows/ltx23_mlx_q4_i2v.api.json`, один прогон 512×512/73/24.
 - WP-01 выполнен: `backend/` (FastAPI, SQLAlchemy 2, Alembic), миграция `0001_initial_core`
   — 11 таблиц §4.1 v1.3 с S10/S11/S12; `GET /health` → 200.
+- WP-02 выполнен: миграции `0002_character_library`, `0003_reference_constraints`,
+  `0004_composition_revisions` — библиотека персонажей, project isolation, ревизии
+  композиций, S13–S18 и триггеры иммутабельности approved-записей.
 - Frontend, worker и логика очереди отсутствуют.
-- Тесты: legacy — 15 passed; backend — 7 passed.
+- Тесты: legacy — 15 passed; backend — 32 passed.

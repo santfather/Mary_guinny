@@ -1,7 +1,7 @@
 # Roadmap Mary Studio
 
-> **Статус:** архитектура утверждена; WP-00 и WP-00B выполнены (2026-10-26),
-> остальные work packages не начаты.
+> **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01 и WP-02
+> выполнены (2026-10-26), WP-03 и далее не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
 > **Принцип:** маленькие проверяемые пакеты; каждый следующий начинается только после
@@ -208,9 +208,9 @@
 - Инварианты §5.3: approve только вручную, approved-версии иммутабельны, архивирование
   вместо удаления.
 
-**Миграции:** `0002_character_library` — новые таблицы и колонки; `0003_reference_assets_constraints`
-— CHECK/составные FK/уникальные индексы; при необходимости `0004_composition_revisions` —
-слои и ревизии. Каждая миграция обратима.
+**Миграции:** `0002_character_library` — новые таблицы и колонки; `0003_reference_constraints`
+— CHECK/составные FK/уникальные индексы; `0004_composition_revisions` — слои, ревизии,
+указатели стартового кадра и триггеры иммутабельности. Каждая миграция обратима.
 
 **Зависит:** WP-01; утверждение S1–S9 (и S11, если эпизод нужен в этой же миграции).
 **DoD:** миграция вверх/вниз; нельзя создать ассет без владельца или с владельцем другого
@@ -219,6 +219,13 @@
 `reference_asset_id`; тесты зелёные.
 **Проверка:** `alembic upgrade head`, `alembic downgrade base`,
 `pytest backend/tests/test_character_library.py`, `pytest backend/tests/test_constraints.py`.
+
+**Состояние:** выполнен 2026-10-26. Миграции `0002_character_library`,
+`0003_reference_constraints`, `0004_composition_revisions` (7 новых таблиц, расширение
+`reference_assets`, S13–S18, триггеры `mary_forbid_approved_change`).
+Проверки: `alembic upgrade head` / `downgrade base` / `upgrade head` на локальном
+PostgreSQL 16.14; `alembic check` → «No new upgrade operations detected»;
+`uv run pytest -q` → 32 passed; legacy `pytest` → 15 passed. API/UI/worker не создавались.
 
 ---
 

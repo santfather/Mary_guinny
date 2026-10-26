@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -55,6 +56,15 @@ REFERENCE_ASSET_KINDS = (
     "prop_reference",
     "uploaded",
 )
+CHARACTER_KINDS = ("cat", "human", "other")
+LIBRARY_STATUSES = ("draft", "active", "archived")
+BIBLE_STATUSES = ("draft", "approved", "superseded")
+BIBLE_SOURCES = ("manual", "import")
+REFERENCE_ASSET_STATUSES = ("draft", "approved", "rejected", "superseded")
+REFERENCE_VIEWS = ("front", "side", "three_quarter", "back", "other")
+REFERENCE_POSES = ("stand", "sit", "walk", "lie", "sleep", "custom")
+SHOT_REFERENCE_PURPOSES = ("character", "location", "prop", "style", "other")
+COMPOSITION_STATUSES = ("draft", "approved", "superseded")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -161,6 +171,15 @@ class Shot(TimestampMixin, Base):
     approved_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("render_attempts.id", name="fk_shots_approved_attempt"),
+    )
+    # S9: единственный источник истины стартового кадра (пишет promote-keyframe).
+    start_keyframe_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id", name="fk_shots_start_keyframe_artifact"),
+    )
+    start_keyframe_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("render_attempts.id", name="fk_shots_start_keyframe_attempt"),
     )
 
 
@@ -335,8 +354,11 @@ class Artifact(Base):
     attempt_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("render_attempts.id")
     )
-    # FK на shot_compositions появится в WP-02 вместе с самой таблицей.
-    shot_composition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # S12: ссылка на ревизию композиции; FK добавлен в WP-02 (0004).
+    shot_composition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("shot_compositions.id", name="fk_artifacts_shot_composition"),
+    )
     source: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
@@ -354,6 +376,59 @@ class ReferenceAsset(Base):
         CheckConstraint(
             _in_list("kind", REFERENCE_ASSET_KINDS), name="ck_reference_assets_kind"
         ),
+        CheckConstraint(
+            _in_list("status", REFERENCE_ASSET_STATUSES), name="ck_reference_assets_status"
+        ),
+        # S1: владелец строго соответствует kind; у uploaded владельца-сущности нет.
+        CheckConstraint(
+            "(kind = 'character_reference' AND character_id IS NOT NULL"
+            " AND location_id IS NULL AND prop_id IS NULL)"
+            " OR (kind = 'location_reference' AND location_id IS NOT NULL"
+            " AND character_id IS NULL AND prop_id IS NULL)"
+            " OR (kind = 'prop_reference' AND prop_id IS NOT NULL"
+            " AND character_id IS NULL AND location_id IS NULL)"
+            " OR (kind = 'uploaded' AND character_id IS NULL"
+            " AND location_id IS NULL AND prop_id IS NULL)",
+            name="ck_reference_assets_owner_matches_kind",
+        ),
+        CheckConstraint(
+            "status <> 'approved' OR approved_at IS NOT NULL",
+            name="ck_reference_assets_approved_at",
+        ),
+        CheckConstraint(
+            "view IS NULL OR view IN ('front', 'side', 'three_quarter', 'back', 'other')",
+            name="ck_reference_assets_view",
+        ),
+        CheckConstraint(
+            "pose IS NULL OR pose IN ('stand', 'sit', 'walk', 'lie', 'sleep', 'custom')",
+            name="ck_reference_assets_pose",
+        ),
+        CheckConstraint("width IS NULL OR width > 0", name="ck_reference_assets_width_positive"),
+        CheckConstraint(
+            "height IS NULL OR height > 0", name="ck_reference_assets_height_positive"
+        ),
+        UniqueConstraint("project_id", "id", name="uq_reference_assets_project_id"),
+        UniqueConstraint("project_id", "sha256", name="uq_reference_assets_project_sha256"),
+        # S1/§3.2: владелец обязан принадлежать тому же проекту.
+        ForeignKeyConstraint(
+            ["project_id", "character_id"],
+            ["characters.project_id", "characters.id"],
+            name="fk_reference_assets_character_project",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "location_id"],
+            ["locations.project_id", "locations.id"],
+            name="fk_reference_assets_location_project",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "prop_id"],
+            ["props.project_id", "props.id"],
+            name="fk_reference_assets_prop_project",
+        ),
+        Index("ix_reference_assets_character_id", "character_id"),
+        Index("ix_reference_assets_location_id", "location_id"),
+        Index("ix_reference_assets_prop_id", "prop_id"),
+        Index("ix_reference_assets_project_status", "project_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -361,10 +436,209 @@ class ReferenceAsset(Base):
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
     )
     kind: Mapped[str] = mapped_column(Text, nullable=False)
+    character_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    location_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    prop_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    role: Mapped[str | None] = mapped_column(Text)
+    view: Mapped[str | None] = mapped_column(Text)
+    pose: Mapped[str | None] = mapped_column(Text)
+    expression: Mapped[str | None] = mapped_column(Text)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    mime_type: Mapped[str | None] = mapped_column(Text)
     # metadata — зарезервированное имя в SQLAlchemy Declarative, колонка остаётся "metadata".
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Character(TimestampMixin, Base):
+    __tablename__ = "characters"
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_characters_project_slug"),
+        UniqueConstraint("project_id", "id", name="uq_characters_project_id"),
+        CheckConstraint(_in_list("kind", CHARACTER_KINDS), name="ck_characters_kind"),
+        CheckConstraint(_in_list("status", LIBRARY_STATUSES), name="ck_characters_status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="other")
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+
+
+class CharacterBibleVersion(Base):
+    __tablename__ = "character_bible_versions"
+    __table_args__ = (
+        UniqueConstraint("character_id", "version", name="uq_bible_character_version"),
+        ForeignKeyConstraint(
+            ["project_id", "character_id"],
+            ["characters.project_id", "characters.id"],
+            name="fk_bible_character_project",
+        ),
+        CheckConstraint("version >= 1", name="ck_bible_version_positive"),
+        CheckConstraint(_in_list("status", BIBLE_STATUSES), name="ck_bible_status"),
+        CheckConstraint(_in_list("source", BIBLE_SOURCES), name="ck_bible_source"),
+        CheckConstraint(
+            "status <> 'approved' OR approved_at IS NOT NULL", name="ck_bible_approved_at"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    character_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="manual")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Location(TimestampMixin, Base):
+    __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_locations_project_slug"),
+        UniqueConstraint("project_id", "id", name="uq_locations_project_id"),
+        CheckConstraint(_in_list("status", LIBRARY_STATUSES), name="ck_locations_status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+
+
+class Prop(TimestampMixin, Base):
+    __tablename__ = "props"
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_props_project_slug"),
+        UniqueConstraint("project_id", "id", name="uq_props_project_id"),
+        CheckConstraint(_in_list("status", LIBRARY_STATUSES), name="ck_props_status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+
+
+class ShotReference(Base):
+    __tablename__ = "shot_references"
+    __table_args__ = (
+        UniqueConstraint(
+            "shot_id", "reference_asset_id", "purpose", name="uq_shot_references_shot_asset_purpose"
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "reference_asset_id"],
+            ["reference_assets.project_id", "reference_assets.id"],
+            name="fk_shot_references_asset_project",
+        ),
+        CheckConstraint(_in_list("purpose", SHOT_REFERENCE_PURPOSES), name="ck_shot_references_purpose"),
+        Index("ix_shot_references_reference_asset_id", "reference_asset_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shots.id"), nullable=False
+    )
+    reference_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ShotComposition(Base):
+    __tablename__ = "shot_compositions"
+    __table_args__ = (
+        UniqueConstraint("shot_id", "revision", name="uq_shot_compositions_shot_revision"),
+        CheckConstraint("revision >= 1", name="ck_shot_compositions_revision_positive"),
+        CheckConstraint(_in_list("status", COMPOSITION_STATUSES), name="ck_shot_compositions_status"),
+        CheckConstraint("width > 0", name="ck_shot_compositions_width_positive"),
+        CheckConstraint("height > 0", name="ck_shot_compositions_height_positive"),
+        CheckConstraint(
+            "status <> 'approved' OR approved_at IS NOT NULL",
+            name="ck_shot_compositions_approved_at",
+        ),
+        Index("ix_shot_compositions_preview_artifact_id", "preview_artifact_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shots.id"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    preview_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id", name="fk_shot_compositions_preview_artifact"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ShotCompositionLayer(Base):
+    __tablename__ = "shot_composition_layers"
+    __table_args__ = (
+        UniqueConstraint("composition_id", "z_index", name="uq_composition_layers_z_index"),
+        ForeignKeyConstraint(
+            ["project_id", "reference_asset_id"],
+            ["reference_assets.project_id", "reference_assets.id"],
+            name="fk_composition_layers_asset_project",
+        ),
+        CheckConstraint("z_index >= 0", name="ck_composition_layers_z_index_non_negative"),
+        CheckConstraint("scale > 0", name="ck_composition_layers_scale_positive"),
+        CheckConstraint(
+            "opacity >= 0 AND opacity <= 1", name="ck_composition_layers_opacity_range"
+        ),
+        Index("ix_composition_layers_reference_asset_id", "reference_asset_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    composition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shot_compositions.id"), nullable=False
+    )
+    reference_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    z_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    x: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="0")
+    y: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="0")
+    scale: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="1")
+    rotation: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="0")
+    opacity: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False, server_default="1")
