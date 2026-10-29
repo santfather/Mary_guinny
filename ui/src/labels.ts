@@ -5,6 +5,14 @@ const STATUS_LABELS: Record<string, string> = {
   superseded: "Заменён",
   active: "Активен",
   archived: "В архиве",
+  pending: "В очереди",
+  running: "Идёт",
+  paused: "Пауза",
+  stopping: "Останавливается",
+  completed: "Завершён",
+  cancelled: "Отменён",
+  failed: "Ошибка",
+  skipped: "Пропущен",
 };
 
 const VIEW_LABELS: Record<string, string> = {
@@ -113,9 +121,16 @@ export function statusLabel(status: string): string {
 }
 
 export function statusTone(status: string): "ok" | "danger" | "warn" | "muted" {
-  if (status === "approved" || status === "active") return "ok";
-  if (status === "rejected") return "danger";
-  if (status === "superseded") return "warn";
+  if (status === "approved" || status === "active" || status === "completed") return "ok";
+  if (status === "rejected" || status === "failed") return "danger";
+  if (
+    status === "superseded" ||
+    status === "paused" ||
+    status === "stopping" ||
+    status === "running"
+  ) {
+    return "warn";
+  }
   return "muted";
 }
 

@@ -21,6 +21,9 @@ import type {
   ScenePlanGenerateRequest,
   ScenePlanWrite,
   SceneSummary,
+  SeriesRun,
+  SeriesRunCreate,
+  SeriesRunSummary,
   ShotDetail,
   ShotReference,
   ShotSummary,
@@ -340,4 +343,15 @@ export const api = {
 
   renderShot: (shotId: string) =>
     request<RenderQueued>(`/api/shots/${shotId}/render`, { method: "POST" }),
+
+  seriesRuns: (projectId: string) =>
+    request<SeriesRunSummary[]>(`/api/projects/${projectId}/series/runs`),
+
+  seriesRun: (runId: string) => request<SeriesRun>(`/api/series/${runId}`),
+
+  createSeriesRun: (projectId: string, body: SeriesRunCreate) =>
+    send<SeriesRun>(`/api/projects/${projectId}/series/runs`, "POST", body),
+
+  seriesAction: (runId: string, action: string) =>
+    request<SeriesRun>(`/api/series/${runId}/${action}`, { method: "POST" }),
 };

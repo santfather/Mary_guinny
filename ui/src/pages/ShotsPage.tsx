@@ -8,7 +8,11 @@ import { useAsync } from "../hooks/useAsync";
 
 export function ShotsPage({ projectId }: { projectId: string }) {
   const scenes = useAsync(() => api.scenes(projectId), [projectId]);
+  const runs = useAsync(() => api.seriesRuns(projectId), [projectId]);
   const [title, setTitle] = useState("");
+  const [runTitle, setRunTitle] = useState("");
+  const [orders, setOrders] = useState("");
+  const [stopOnError, setStopOnError] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,6 +22,7 @@ export function ShotsPage({ projectId }: { projectId: string }) {
     try {
       await action();
       scenes.reload();
+      runs.reload();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -31,6 +36,23 @@ export function ShotsPage({ projectId }: { projectId: string }) {
     void run(async () => {
       await api.createScene(projectId, { title: value === "" ? null : value });
       setTitle("");
+    });
+  }
+
+  function addRun(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const shotOrders = orders
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isInteger(value) && value >= 1);
+    void run(async () => {
+      const created = await api.createSeriesRun(projectId, {
+        title: runTitle.trim() === "" ? undefined : runTitle.trim(),
+        shot_orders: shotOrders.length === 0 ? undefined : shotOrders,
+        stop_on_error: stopOnError,
+      });
+      setRunTitle("");
+      window.location.hash = `#/series/${created.run_id}`;
     });
   }
 
@@ -61,6 +83,63 @@ export function ShotsPage({ projectId }: { projectId: string }) {
             {busy ? "…" : "Создать сцену"}
           </button>
         </div>
+      </form>
+
+      <form className="panel" onSubmit={addRun}>
+        <h2>Прогон серии</h2>
+        <p className="muted">
+          Одна тяжёлая job за раз. Неготовые шоты попадают в прогон как пропущенные.
+        </p>
+        <div className="form-row">
+          <label className="field field--grow">
+            <span>Название прогона</span>
+            <input
+              type="text"
+              value={runTitle}
+              placeholder="NLB-single"
+              onChange={(event) => setRunTitle(event.target.value)}
+            />
+          </label>
+          <label className="field field--grow">
+            <span>Шоты (номера через запятую, пусто — все)</span>
+            <input
+              type="text"
+              value={orders}
+              placeholder="1, 2"
+              onChange={(event) => setOrders(event.target.value)}
+            />
+          </label>
+          <label className="field field--inline">
+            <input
+              type="checkbox"
+              checked={stopOnError}
+              onChange={(event) => setStopOnError(event.target.checked)}
+            />
+            <span>Пауза при ошибке</span>
+          </label>
+          <button type="submit" className="button" disabled={busy}>
+            {busy ? "…" : "Создать прогон"}
+          </button>
+        </div>
+
+        {runs.state.status === "ready" && runs.state.data.length > 0 && (
+          <ul className="list">
+            {runs.state.data.map((item) => (
+              <li key={item.run_id}>
+                <a className="list__item" href={`#/series/${item.run_id}`}>
+                  <div className="list__main">
+                    <strong>{item.title ?? `Прогон ${item.run_id.slice(0, 8)}`}</strong>
+                    <span className="muted">
+                      {item.total_items} шотов ·{" "}
+                      {new Date(item.created_at).toLocaleString("ru-RU")}
+                    </span>
+                  </div>
+                  <StatusBadge status={item.status} />
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
       </form>
 
       {error !== null && (

@@ -276,3 +276,46 @@ export interface LayoutExport {
   source_artifact_id: string;
   is_layout_mockup: boolean;
 }
+
+export interface SeriesRunSummary {
+  run_id: string;
+  title: string | null;
+  status: string;
+  total_items: number;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface SeriesItem {
+  order: number;
+  shot_id: string;
+  shot_sequence_no: number;
+  status: string;
+  job_id: string | null;
+  job_status: string | null;
+  progress: number | null;
+  error_code: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface SeriesRun {
+  run_id: string;
+  project_id: string;
+  title: string | null;
+  status: string;
+  stop_on_error: boolean;
+  manifest_sha256: string | null;
+  total_items: number;
+  counts: Record<string, number>;
+  started_at: string | null;
+  finished_at: string | null;
+  items: SeriesItem[];
+}
+
+export interface SeriesRunCreate {
+  title?: string;
+  shot_orders?: number[];
+  stop_on_error: boolean;
+}

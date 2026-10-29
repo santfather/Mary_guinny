@@ -9,6 +9,7 @@ import { useHashRoute, libraryKindOf } from "./hooks/useHashRoute";
 import { CharacterDetailPage } from "./pages/CharacterDetailPage";
 import { CharacterListPage } from "./pages/CharacterListPage";
 import { LibraryDetailPage, LibraryListPage } from "./pages/LibraryPages";
+import { SeriesRunPage } from "./pages/SeriesRunPage";
 import { ShotDetailPage } from "./pages/ShotDetailPage";
 import { ShotsPage } from "./pages/ShotsPage";
 
@@ -25,6 +26,7 @@ export function App() {
   const active = list.find((project) => project.id === selectedId) ?? preferredProject(list);
   const inCharacters = route.name === "characters" || route.name === "character";
   const inShots = route.name === "shots" || route.name === "shot";
+  const inSeries = route.name === "series";
   const libraryKind = libraryKindOf(route);
 
   function renderContent() {
@@ -39,6 +41,9 @@ export function App() {
     }
     if (route.name === "shot") {
       return <ShotDetailPage shotId={route.id} />;
+    }
+    if (route.name === "series") {
+      return <SeriesRunPage runId={route.id} />;
     }
     if (projects.state.status === "loading") {
       return <StateView kind="loading" title="Загрузка проектов" />;
@@ -74,7 +79,7 @@ export function App() {
     return <CharacterListPage projectId={active.id} />;
   }
 
-  const showProjectPicker = !inCharacters && !inShots;
+  const showProjectPicker = !inCharacters && !inShots && !inSeries;
 
   return (
     <div className="app">
