@@ -97,7 +97,7 @@
 
 ---
 
-## 8. Текущее состояние (на 2026-10-26)
+## 8. Текущее состояние (на 2026-10-29)
 
 - WP-00 выполнен: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ENV-AUDIT.md`, `AGENTS.md`.
 - WP-00B выполнен: git инициализирован, ветка `main`, remote `git@github.com:santfather/Mary_guinny.git`.
@@ -134,12 +134,71 @@
   resume; обязательный токен), `app/api/jobs.py`, `app/video_probe.py`,
   `Idempotency-Key` в `POST /api/shots/{id}/render`, `worker/fake_worker.py`
   (ffmpeg → валидный MP4). `lease_expired` не перезапускается автоматически.
+- WP-N1 выполнен: `app/series_manifest.py`, `app/series_import.py`, `app/preflight.py`,
+  `app/import_series.py`, `app/api/series.py` — импорт «Ночного тыгыдыка» (30 шотов,
+  30 motion-ревизий, 6 референсов) и preflight; блокировки `missing_reference`/
+  `missing_start_frame` выводятся из данных, enum `Shot.status` не расширялся.
+- WP-N2 выполнен: `pipeline/comfyui/ltx_adapter.py` — шаблон → payload шота
+  (`snap_frames` 8k+1, 9:16 → 1080×1920, уникальный `filename_prefix`,
+  `workflow_version` = sha256 шаблона).
+- WP-N3 выполнен: `worker/client.py` (общий протокол), `worker/ltx_worker.py`
+  (кадр → `/prompt` → heartbeat на каждом `/history` → `/view` → `ffprobe` → artifact →
+  complete); `claim` отдаёт `inputs.prompt`/`shot_key` из motion-ревизии (§5.2 baseline).
+  Реальный рендер в ComfyUI не запускался.
+- WP-N4 выполнен: миграция `0007_render_series` (`series_runs`, `series_items`),
+  `app/api/series_runs.py` (create/list, `start/pause/resume/stop-after-current/cancel`,
+  воркерский `POST /api/worker/series/next` — одна тяжёлая job за раз, идемпотентность
+  `series:{run_id}:{order}`), `app/notify.py` (баннер macOS), `--series-run` в
+  `worker/ltx_worker.py`, UI `#/series/{id}` и панель прогона на `#/shots`.
+  `enum Shot.status` и имена событий не расширялись.
 - WP-05B (multi-reference video PoC) не начат: LTX в WP-05A не запускался.
+- Калибровка 2026-10-28: первая попытка 1080×1920 остановлена по памяти (stage 2 не
+  завершил ни одного шага; two-stage снапит до 1024×1920). Вторая попытка 576×1024
+  (`--long-side 1024`) — MP4 получен: h264, 576×1024, 24 fps, 193 кадра, 8.04 с,
+  полный рендер ≈ 18 мин. Разрешение серии зафиксировано в `docs/DECISIONS.md` §4.5.
 - WP-04A выполнен: единый `app/api/library.py` (локации и предметы через реестр
   `_LibraryKind`), `deps.require_project`, схемы `LibraryEntity*`; удалены
   `api/locations.py`, `api/props.py`; UI — `pages/LibraryPages.tsx`,
   `hooks/useReferenceReview.ts`, `libraryApi`; удалены `LocationsPage`, `PropsPage`,
   `ReferenceGrid`. «Основной референс» — `role='primary'` с единственностью среди
   mutable-референсов (`_clear_other_primary`); approved остаётся неизменяемым (S15).
-- Тесты: legacy — 15 passed; backend — 143 passed; `alembic check` — no new operations;
-  UI — `npm run build`.
+- Тестовые шоты 2026-10-28: NLB-02/NLB-03 (прогон `7b0750a4…`, воркер без `--once`
+  закрыл оба сам) и NLB-31 (танец + реплика, artifact `19fb5662…`). Все MP4 — h264,
+  576×1024, 24 fps, 193 кадра; аудиодорожка `aac` 48 kHz stereo есть у всех роликов.
+  Человек принял качество («морфинга нет, герой не плывёт») и разрешил серию 30.
+- WP-08 выполнен: миграция `0008_series_run_title` (`series_runs.title`, nullable),
+  поле `title` в `POST /api/projects/{id}/series/runs`, в списке и в детали прогона;
+  UI — поле «Название прогона» на `#/shots` и заголовок `#/series/{id}`. Первый
+  именованный прогон — «NLB-single» (`85e04a00…`, 24 шота 4–27). Утверждены 5
+  референсов (гитарист, барабанщик, басист, клавишник, Guiness) и созданы 24
+  стартовых кадра через `keyframe` + `promote-keyframe`; NLB-28…30 ждут референс
+  `wide_cinematic_concert_stage_scene_a_realistic.png`.
+- Прогон «NLB-single» завершён: 24 из 24 completed, 7 ч 05 мин, все MP4 — 576×1024 / 193
+  кадра / 24 fps с аудио `aac`.
+- 2026-10-29: получен широкий референс (`docs/cats/Feline Rock Band Under Neon Lights.png`,
+  asset `e7af9bb1…`, approved по разрешению человека), созданы стартовые кадры 28–30,
+  preflight — `references` OK и `start_frames` 30 из 30. Прогон «NLB-single wide (28-30)»
+  (`ce0c1bfa…`) рендерит 28–30 в 16:9, 1024×576 (`docs/DECISIONS.md` §4.5 п.5).
+- 2026-10-29, NLB-21…27 (сюжетные шоты): новый портрет Гиннесса
+  `docs/cats/Chocolate Burmese Cat Portrait.png` импортирован штатным API как
+  `kind=uploaded`, `role=guinness_identity`, approved человеком (asset `6f999c54…`,
+  1064×1479, sha256 `f7ec5d84…`); старая карточка `Guiness_clean` (`e4c57b2f…`) отвязана
+  от 21–27, но осталась approved. Сцен-кадры 9:16 подготовлены внешне (системной
+  генерации сцен с сохранением идентичности нет) и проведены штатным путём
+  `POST /api/projects/{id}/references?role=nlb_XX_start` → `keyframe` → `promote-keyframe`.
+- Motion-промпты NLB-21…27 заменены ревизиями v2 (`source=human_prompt_override`) через
+  новый CLI `python -m app.set_shot_prompts` (dry-run/apply, идемпотентен); v1 сохранены.
+- Провенанс рендера: необязательное `parameters` в `WorkerCompleteRequest` дописывается в
+  `render_attempts.parameters` — width/height/num_frames/frame_rate/cfg_scale/seed/
+  aspect_ratio/long_side/filename_prefix/shot_key + `workflow_snapshot`. У старых попыток
+  поля нет (история не переписывалась); схема БД не менялась.
+- Перегенерация NLB-21…27: по одному новому RenderAttempt на шот, все MP4 — h264
+  576×1024 / 24 fps / 193 кадра / 8.04 с / `aac` 48 kHz stereo; старые попытки и MP4
+  сохранены (всего 14 видео-попыток по семи шотам). Человек утвердил все семь роликов.
+- Ограничения, подтверждённые при работе: planner не создаёт изображения, composer даёт
+  только `layout mockup`, SDXL/IPAdapter в ComfyUI отсутствуют — сцен-кадры производятся
+  вне системы; входные кадры 392–396 px шириной модель апскейлит (1.56–1.66×) с обрезкой
+  3–6% по бокам.
+- Тесты: legacy — 15 passed; backend — 182 passed; `tests/test_ltx_worker.py` — 16 passed;
+  `tests/test_ltx_adapter.py` — 12 passed; корневой `python -m pytest tests` — 43 passed;
+  `alembic check` — no new operations (после `0008_series_run_title`); UI — `npm run build`.

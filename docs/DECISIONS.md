@@ -289,6 +289,165 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
   `start_keyframe_artifact_id`.
 - Два источника утверждённого стартового кадра не создаются: кадр утверждается только
   через `promote-keyframe`.
+- `POST /api/shots/{id}/keyframe` принимает либо `composition_revision`, либо
+  `reference_asset_id` (ровно одно). Второй вариант — стартовый кадр из **approved**
+  референса без генерации: проверяются проект, статус, наличие файла и sha256; создаётся
+  `render_attempt(kind=keyframe, workflow_version='approved-reference-v1')` с provenance в
+  `parameters` и `artifact(source=attempt)`. Повтор с тем же референсом идемпотентен.
+  Назначение кадра по-прежнему делает только `promote-keyframe`. Схема БД не менялась.
+
+### 4.2. Серия «Ночной тыгыдык»: импорт и preflight (WP-N1)
+
+| Эндпоинт | Назначение | Схема БД |
+|---|---|---|
+| `POST /api/projects/{id}/series/import` | идемпотентный импорт JSON-манифеста в Project/Episode/Scene/Shot/PromptRevision/ShotReference | не меняется |
+| `POST /api/projects/{id}/series/preflight` | готовность серии к пакетному запуску; только чтение | не меняется |
+
+1. Идентичность импорта — natural keys: `Shot(scene_id, sequence_no)`,
+   `PromptRevision(shot_id, prompt_type, version)`,
+   `ShotReference(shot_id, reference_asset_id, purpose)`. Повторный импорт создаёт 0 строк.
+2. Порядок `Shot` = `order` манифеста → `shots.sequence_no`. `target_duration_frames` =
+   `snap8k1(верхняя граница target_duration_seconds × fps)` (7–8 с при 24 fps → 193 кадра),
+   `timeline_fps` = fps. Верхняя граница выбрана потому, что подрезка делается в монтаже.
+3. Исходный prompt сохраняется дословно в `prompt_revisions.prompt`; provenance — в
+   `parameters_json` (`source=nine_lives_band_manifest`, `manifest_sha256`, `shot_key`,
+   `output_name_prefix`, `start_frame_filename`, `seed`, `generator`). Новая версия промпта
+   создаётся только при изменении текста.
+4. Имя референса — не идентификатор. Разрешение требует одновременно: совпадения имени
+   (`metadata_json.original_name`, `legacy_path`, basename `storage_key`), принадлежности
+   проекту, наличия файла в storage и совпадения sha256. Неоднозначность или несовпадение —
+   ошибка, а не выбор «первого подходящего».
+5. Отсутствующие файлы не подменяются: референс либо загружается из `--references-dir`
+   со статусом `draft` (S16/D5), либо импорт фиксирует ошибку. `approved` — только вручную.
+6. CSV-очередь — контрольный артефакт: расхождение с манифестом (порядок, ключи, промпты,
+   префиксы) блокирует импорт (HTTP 422 / код возврата 2).
+7. Шоты без `start_frame_filename` (сюжетные, 7 шт.) остаются без стартового кадра:
+   preflight помечает их как блокированные, кадр утверждает человек.
+8. Preflight не пишет в БД. Проверки: `manifest`, `queue_csv`, `project`, `shots`,
+   `prompts`, `references`, `start_frames`, `workflow`, `video_params`, `disk`, `outputs`.
+   `video_params` остаётся `warn` до подтверждения реальным рендером.
+
+### 4.3. Реальный LTX-воркер (WP-N3)
+
+1. `POST /api/worker/claim` отдаёт `inputs.prompt` и `inputs.shot_key` из последней
+   `prompt_revisions` с `prompt_type='motion'`, если их нет в `jobs.payload`. Это
+   соответствие baseline `docs/ARCHITECTURE.md` §5.2 (`inputs.prompt`), а не новый контракт:
+   набор полей `inputs` был открытым, схема БД и эндпоинты не менялись.
+2. `worker/ltx_worker.py` работает только через `/api/worker/*` и не пишет в БД напрямую.
+   Стартовый кадр берётся из `inputs.start_image` (его назначает только `promote-keyframe`),
+   sha256 проверяется до отправки в ComfyUI.
+3. Payload ComfyUI собирает `pipeline/comfyui/ltx_adapter.py`; `num_frames` из шота
+   сверяется с `8k+1` — при расхождении job падает с `frames_not_supported`, молчаливая
+   подмена длительности запрещена.
+4. Lease продлевается heartbeat-ом на каждом опросе `/history`; общий таймаут рендера
+   ограничен (`--timeout`, по умолчанию 3600 с).
+5. Модель и версия шаблона пишутся в `render_attempts` (`model_hash` = `model_dir` из
+   `LTX2MLXModelLoader`, `workflow_version` = префикс + sha256 шаблона).
+6. Отмена рендера в ComfyUI при потере lease не реализована: воркер завершает процесс
+   с ошибкой, рендер остаётся в очереди ComfyUI. Это ограничение WP-N3, а не инвариант.
+
+### 4.4. Управляемый прогон серии (WP-N4)
+
+| Эндпоинт | Назначение | Схема БД |
+|---|---|---|
+| `POST /api/projects/{id}/series/runs` | создать прогон (`draft`); готовые шоты → `pending`, неготовые → `skipped` с причиной | `0007_render_series` |
+| `GET /api/projects/{id}/series/runs` | список прогонов проекта | — |
+| `GET /api/series/{run_id}` | прогон с item'ами, `counts` и прогрессом | — |
+| `POST /api/series/{run_id}/{start\|pause\|resume\|stop-after-current\|cancel}` | управление прогоном | — |
+| `POST /api/worker/series/next` | воркерский: закрыть текущий item и выдать следующую job серии | — |
+
+1. Прогон — намерение человека и прогресс по шотам; тяжёлые рендеры по-прежнему живут в
+   `jobs`. `concurrency = 1` соблюдается тем, что `series/next` создаёт job только после
+   завершения текущей, а не отдельной очередью.
+2. Таблицы `series_runs` / `series_items` не дублируют статусы job: `series_items.job_id`
+   ссылается на `jobs`, а `job_status` читается JOIN-ом. `series_items."order"` — позиция
+   внутри прогона (`>= 1`), уникальна вместе с `run_id`; повторный шот в одном прогоне
+   запрещён (`uq_series_items_run_shot`).
+3. Готовность выводится из данных (`blocked_reason`): `missing_start_frame` →
+   `missing_prompt` → `missing_reference`. `enum Shot.status` и preflight не меняются.
+4. Политика ошибок — `stop_on_error` (по умолчанию `true`, как в манифесте): item переходит
+   в `failed`, прогон — в `paused`; продолжение только явным `resume`. Шоты, заблокированные
+   на момент выдачи, получают `skipped` и не останавливают прогон.
+5. `stop-after-current` переводит прогон в `stopping`: текущий шот досчитывается, новая job
+   не создаётся, после завершения прогон уходит в `paused`.
+6. Идемпотентность: `jobs.idempotency_key = series:{run_id}:{order}`; повторный
+   `series/next` не создаёт вторую job для того же item. Если у шота уже есть активная
+   render-job, ответ `busy` — прогон не дублирует рендер.
+7. `POST /api/worker/series/next` требует worker-токен. Без `run_id` берётся самый ранний
+   прогон в статусе `running`.
+8. Уведомления (баннер macOS) — best-effort: запуск, пауза по ошибке, завершение прогона.
+   Ошибки `osascript` подавляются, `MARY_DISABLE_NOTIFY=1` выключает их полностью.
+9. Ворота: состав прогона задаётся `shot_orders` (номера шотов). Калибровочный рендер и
+   два тестовых шота — отдельные прогоны; вся серия — только по отдельному разрешению.
+10. `worker/ltx_worker.py --series-run <id>` (или `--series`) работает по протоколу
+    `series/next` → `claim` → одна тяжёлая job. Отмена текущего рендера в ComfyUI
+    по-прежнему не реализована (см. §4.3 п.6).
+
+### 4.5. Разрешение рендера серии: 576×1024 (калибровка 2026-10-28)
+
+1. Two-stage half-res в ComfyUI снапит стороны до кратных 64, поэтому 1080×1920 на этой
+   машине не рендерится (фактически 1024×1920, 8:15). Точные 9:16 при кратности 64 —
+   только 576×1024 (`--long-side 1024`).
+2. Замеры на 16 ГБ RAM: 576×1024 / 193 кадра / 24 fps — stage 1 (3600 видео-токенов)
+   8 шагов ≈ 7:07, stage 2 (14400 видео-токенов) 3 шага ≈ 11 мин; полный рендер ≈ 18 мин,
+   thrash не возникал (swap пик 18.5 из 19.4 ГБ с учётом файла подкачки).
+   Для сравнения: 1024×1920 — stage 1 (12000 токенов) 168 с/шаг, stage 2 (48000 токенов)
+   не завершил ни одного шага за 24 мин.
+3. Решение: шоты серии рендерятся в 576×1024 с `--long-side 1024`; апскейл до 1080×1920
+   выполняется на этапе сборки (не реализован). `DEFAULT_LONG_SIDE = 1920` в адаптере и
+   `--long-side` по умолчанию не меняются: это параметр запуска, а не новое умолчание.
+4. Качество I2V в 576×1024 оценивается человеком по артефакту; до этой оценки серия не
+   запускается. Схема БД, эндпоинты и контракты не менялись.
+5. Исключение для общих планов (NLB-28…30, решение человека 2026-10-29): стартовый кадр —
+   широкий план сцены 1536×1024 (3:2), при 9:16 от группы осталась бы только центральная
+   часть. Эти три шота рендерятся в 16:9, 1024×576 (`--aspect-ratio 16:9 --long-side 1024`).
+   При сборке широкий план вставляется в 9:16-таймлайн отдельным кадром. Индивидуальное
+   разрешение шота по-прежнему задаётся параметрами запуска воркера, а не новым умолчанием.
+
+### 4.6. Имя прогона серии (WP-08)
+
+1. Прогон серии получает необязательное человеческое имя: `series_runs.title` (Text,
+   nullable). Имя задаётся при создании прогона (`SeriesRunCreate.title`, 1…200 символов)
+   и отдаётся в детали и в списке прогонов. Прогоны без имени остаются валидными и
+   опознаются по `id`.
+2. Миграция `0008_series_run_title` — только `ADD COLUMN`; downgrade удаляет колонку.
+   Инварианты v1.3, `series_items`, идемпотентность `series:{run_id}:{order}` не меняются.
+3. Первый именованный прогон — «NLB-single» (серия «Ночной тыгыдык»).
+
+### 4.7. Сюжетные шоты NLB-21…27: identity-референс и внешние сцен-кадры
+
+1. **Identity-референс персонажа.** Внешность Гиннесса задаётся отдельным референсом:
+   `reference_assets` с `kind='uploaded'` и `role='guinness_identity'`, утверждённым
+   человеком. Он используется как эталон внешности на этапе подготовки кадра, но **не**
+   как универсальный стартовый кадр I2V. Сущность `Character` в проекте «Ночной тыгыдык»
+   не создаётся (как и раньше, референсы проекта живут без персонажей).
+2. **Сцен-кадры готовятся вне системы.** Генерации сцены с сохранением идентичности в
+   системе нет: `app/planner.py` — только vision-советник (изображений не создаёт),
+   `app/composer.py` — Pillow-композитинг слоёв с предупреждением «непрозрачный слой»
+   (`layout mockup`), SDXL/IPAdapter в доступном ComfyUI отсутствуют. Поэтому кадры 9:16
+   создаются внешним инструментом и подаются в систему штатным путём:
+   `POST /api/projects/{id}/references?kind=uploaded&role=nlb_XX_start` → approve →
+   `POST /api/shots/{id}/keyframe` (`reference_asset_id`) → `promote-keyframe`.
+   Исключений в API нет; `start_frame_artifact_id` напрямую не пишется (§4.1).
+3. **Промпты.** Замена motion-промпта оформляется новой ревизией
+   (`prompt_type='motion'`, `version = latest + 1`) с провенансом
+   `parameters_json.source='human_prompt_override'`, `shot_key`, `previous_version`.
+   Прежние ревизии не перезаписываются. CLI: `python -m app.set_shot_prompts`
+   (`--dry-run` / `--apply`, идемпотентен, поиск по `project.title` + `scene.title` +
+   `sequence_no`).
+4. **Провенанс рендера.** `render_attempts.parameters` заполняется воркером при
+   `complete`: `width`, `height`, `num_frames`, `frame_rate`, `cfg_scale`, `seed`,
+   `aspect_ratio`, `long_side`, `filename_prefix`, `shot_key`, `worker_name`,
+   `job_attempt` + `workflow_snapshot` (фактический связанный workflow). Поле
+   `parameters` в `WorkerCompleteRequest` необязательное — воркеры без него остаются
+   совместимыми. Миграции нет (JSONB уже существует), у ранее созданных попыток поле
+   не переписывается.
+5. **Отвязка старой карточки.** Ссылки `shot_references` на многоракурсную карточку
+   `Guiness_clean` сняты у 21–27; сам ассет остаётся `approved` (S15), прошлые
+   RenderAttempt и MP4 не удаляются и не перезаписываются.
+6. **Результат.** Семь сюжетных шотов имеют собственные утверждённые сцен-кадры и
+   отрендерены заново (по одной новой попытке на шот): h264 576×1024, 24 fps, 193 кадра,
+   8.04 с, `aac` 48 kHz stereo. NLB-01…20 и NLB-28…30 не затрагивались.
 
 ---
 
@@ -346,3 +505,10 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
 | 2026-10-26 | Первая редакция: P1–P4, S1–S12, A1–A6, D1–D8 утверждены; зафиксированы инварианты S8/S11/S12 |
 | 2026-10-26 | S13–S18: уточнения перед WP-02 (статусы референсов, `purpose`, триггеры иммутабельности, `project_id` в bible, единственность approved-ревизии, `characters.kind`) |
 | 2026-10-26 | S19: Visual Scene Plan (WP-05A) — таблица `visual_scene_plans`, JSONB-план, триггер S15, one-approved индекс, `shot_compositions.source_plan_id`, `layout mockup`, vision как советующий источник |
+| 2026-10-28 | §4.2: импорт серии «Ночной тыгыдык» и preflight (WP-N1) — два аддитивных эндпоинта `series/import` и `series/preflight`, natural keys, разрешение имён референсов по файлу и sha256, `snap8k1` для длительности; схема БД не менялась |
+| 2026-10-28 | §4.1: `keyframe` из approved-референса (`reference_asset_id`) без генерации изображения; писатель стартового кадра остаётся единственным — `promote-keyframe`; миграции нет |
+| 2026-10-28 | §4.3: реальный LTX-воркер (WP-N3) — `inputs.prompt`/`shot_key` из motion-ревизии (соответствие §5.2 baseline), проверка sha256 стартового кадра, `8k+1`, heartbeat на каждом опросе `/history`, provenance модели и шаблона; схема и эндпоинты не менялись |
+| 2026-10-28 | §4.4: управляемый прогон серии (WP-N4) — миграция `0007_render_series` (`series_runs`, `series_items`), эндпоинты прогона и `POST /api/worker/series/next`, `stop_on_error`, `stop-after-current`, идемпотентность `series:{run_id}:{order}`, баннеры macOS |
+| 2026-10-28 | §4.5: разрешение рендера серии — 576×1024 (`--long-side 1024`) по результатам калибровки; 1080×1920 не поддержан two-stage half-res на 16 ГБ RAM; умолчания адаптера и воркера не менялись |
+| 2026-10-28 | §4.6: имя прогона серии (WP-08) — миграция `0008_series_run_title` (`series_runs.title`, nullable), поле `title` в create/list/detail, первый именованный прогон «NLB-single» |
+| 2026-10-29 | §4.7: сюжетные шоты NLB-21…27 — identity-референс `role='guinness_identity'` отдельно от стартового кадра, внешние сцен-кадры 9:16 через штатный путь `references → keyframe → promote-keyframe`, motion v2 с `source='human_prompt_override'`, провенанс `render_attempts.parameters` (+`workflow_snapshot`) без миграции; старая карточка `Guiness_clean` отвязана, но остаётся approved |
