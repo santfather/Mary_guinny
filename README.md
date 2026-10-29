@@ -259,6 +259,120 @@ python main.py status --episode ep01
 
 ---
 
+## Локальный запуск Mary Studio
+
+Единый менеджер сервисов — `mary.sh` в корне репозитория (backend, Vite UI, ComfyUI):
+
+```bash
+./mary.sh doctor          # проверка окружений, портов и зависимостей
+./mary.sh start           # backend :8000, UI :5173, ComfyUI :8188
+./mary.sh start --follow  # запуск и сразу monitor
+./mary.sh status
+./mary.sh logs            # последние строки всех логов
+./mary.sh logs comfy --follow   # живой лог ComfyUI (Ctrl+C — только выход из tail)
+./mary.sh monitor         # живой прогресс рендера и генерации (--once — один кадр)
+./mary.sh stop
+```
+
+Скрипт управляет **только своими** процессами: PID хранятся в `runtime/pids/`, логи — в
+`runtime/logs/` (каталог вне Git). Процессы, запущенные вручную, показываются как
+`RUNNING (external)` и не останавливаются. PostgreSQL и worker не запускаются: доступность
+Postgres проверяется, а воркеры (`worker/ltx_worker.py` — реальный,
+`worker/fake_worker.py` — тестовый) стартуют вручную, чтобы тяжёлый рендер не начался
+случайно.
+
+### Живой прогресс генерации
+
+`./mary.sh monitor` обновляет экран каждые 2 секунды (интервал меняется
+`MARY_MONITOR_INTERVAL`, `monitor --once` печатает один кадр), показывает состояния
+сервисов, текущий render job, ComfyUI prompt ID, этап, прогресс N/M, прошедшее время и
+последние сообщения логов. Монитор не ведёт собственный реестр статусов, а читает уже
+существующие источники:
+
+| Показатель | Источник |
+|---|---|
+| Backend / Frontend / ComfyUI | `runtime/pids/*.pid` + проверка идентичности процесса, health endpoints (`/health`, `/`, `/system_stats`) |
+| Postgres | `pg_isready` |
+| render job: id, статус, попытка, прошедшее время, ошибка | `GET /api/jobs?limit=10` |
+| ComfyUI prompt ID, очередь, время prompt'а | `GET /queue` |
+| Этап: подготовка, загрузка модели, генерация, декодирование, сохранение, завершение | строки лога ComfyUI после последнего `got prompt` |
+| Прогресс N/M | прогресс-бар в логе ComfyUI (`Denoising: 62%|...| 5/8`), только для активного prompt'а |
+| Последние сообщения | хвост `runtime/logs/comfyui.log` и `runtime/logs/backend.log` |
+
+Если достоверного N/M нет (нода не печатает прогресс-бар, prompt не выполняется, ComfyUI
+не запущен), монитор пишет `Прогресс: неизвестен (...)` — без фиктивного процента и ETA.
+Воркеры `mary.sh` не запускает и показывает строку `MANUAL`; их команды — в
+`./mary.sh worker`.
+
+ComfyUI запускается с `PYTHONUNBUFFERED=1`: иначе Python буферизует stdout при записи в
+файл и лог отстаёт от реального прогресса. Прогресс-бары разделены `\r`, а не `\n`, —
+монитор разбирает их через `tr '\r' '\n'`. Сервисы запускаются в отдельной сессии,
+поэтому Ctrl+C в `start --follow` или `logs --follow` не останавливает ComfyUI.
+
+### Импорт производственного плана серии
+
+Из `backend/` (активирован `backend/.venv`):
+
+```bash
+python -m app.import_series \
+  --manifest ../docs/Nine_Lives_Band_Render_Manifest.json \
+  --queue-csv ../docs/Nine_Lives_Band_Shot_Queue.csv \
+  --project-title "The Nine Lives Band" --create-project \
+  --references-dir ../docs/cats --dry-run   # план без записи в БД
+
+# тот же вызов с --apply: идемпотентная запись, повтор даёт 0 новых строк
+python -m app.preflight \
+  --manifest ../docs/Nine_Lives_Band_Render_Manifest.json \
+  --queue-csv ../docs/Nine_Lives_Band_Shot_Queue.csv \
+  --project-title "The Nine Lives Band"     # отчёт готовности, только чтение
+```
+
+`preflight` возвращает код 1 при наличии `[FAIL]` и не подменяет отсутствующие файлы
+фиктивными. Отчёт последнего импорта — `docs/NINE_LIVES_BAND_IMPORT_REPORT.md`;
+контракт — `docs/DECISIONS.md` §4.2.
+
+### Реальный воркер LTX (одна job)
+
+```bash
+backend/.venv/bin/python worker/ltx_worker.py --once \
+  --token "$MARY_WORKER_TOKEN" --aspect-ratio 9:16
+```
+
+Воркер берёт одну `render_video` job из очереди, скачивает утверждённый стартовый кадр
+(sha256 сверяется), собирает payload через `pipeline/comfyui/ltx_adapter.py`, рендерит в
+ComfyUI, продлевая lease на каждом опросе `/history`, проверяет MP4 через `ffprobe` и
+загружает артефакт. Коды ошибок вместо тихих подстановок: `missing_start_image`,
+`missing_prompt`, `frames_not_supported`, `start_image_sha256_mismatch`,
+`comfy_unavailable`, `comfy_no_output`, `invalid_output`. Контракт — `docs/DECISIONS.md`
+§4.3. Тестовый аналог без GPU — `worker/fake_worker.py`.
+
+### Последовательный прогон серии
+
+```bash
+# создать прогон: пусто в shot_orders — все шоты проекта
+curl -X POST http://127.0.0.1:8000/api/projects/<project_id>/series/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"shot_orders": [1, 2], "stop_on_error": true}'
+
+curl -X POST http://127.0.0.1:8000/api/series/<run_id>/start
+
+backend/.venv/bin/python worker/ltx_worker.py --series-run <run_id> \
+  --long-side 1024 --token "$MARY_WORKER_TOKEN"
+```
+
+`--long-side 1024` при 9:16 даёт 576×1024 — принятое разрешение серии: two-stage half-res
+снапит стороны до кратных 64, а 1080×1920 на 16 ГБ RAM не проходит по памяти
+(`docs/DECISIONS.md` §4.5).
+
+Воркер циклически спрашивает `POST /api/worker/series/next`, забирает ровно одну job и
+рендерит её; следующая job создаётся только после завершения текущей. Управление:
+`start`, `pause`, `resume`, `stop-after-current`, `cancel`. UI — `#/series/{run_id}`,
+список и создание прогонов — панель «Прогон серии» на `#/shots`. Неготовые шоты попадают
+в прогон как `skipped` с причиной (`missing_start_frame`, `missing_prompt`,
+`missing_reference`). Контракт — `docs/DECISIONS.md` §4.4.
+
+---
+
 ## Конфигурация (`.env`)
 
 | Переменная | По умолчанию | Назначение |
@@ -297,18 +411,17 @@ pytest
 
 ## Текущее состояние
 
-- Локальная фаза реализована: сценарий через Ollama, референсы и keyframe через ComfyUI,
-  сборка черновика через ffmpeg.
-- Облачная фаза пока работает в режиме проверки артефактов: этапы `final_video`, `voices`,
-  `lipsync`, `music`, `assembly` формируют задания/проверяют файлы, а генерация выполняется
-  во внешних сервисах вручную.
-- Все шаблоны, на которые ссылается код (`character_pose_gen.api.json`,
-  `character_pose_openpose.api.json`, `character_pose_ipadapter.api.json`,
-  `scene_draft_ltx.api.json`, `scene_draft_ipadapter.api.json`), присутствуют.
-- Для LTX-2 MLX есть только UI-граф `ltx23_mlx_q4_test.json` (T2V, q8, 256×256,
-  25 кадров); API-формата I2V Q4 в репозитории нет.
+- Mary Studio (backend + UI + очередь) — пакеты WP-00…WP-06 выполнены; git инициализирован,
+  ветки пакетов не мержатся без отдельного разрешения.
+- Серия «Ночной тыгыдык»: импорт 30 шотов и preflight (WP-N1), адаптер LTX-2.3 MLX (WP-N2),
+  реальный воркер (WP-N3), управляемый прогон серии `0007_render_series` (WP-N4).
+- API-формат I2V: `comfyui-workflows/ltx23_mlx_q4_i2v.api.json`; UI-граф
+  `ltx23_mlx_q4_test.json` оставлен как есть.
+- Ограничения LTX2MLX: `num_frames` 9…257 (только 8k+1), размеры кратны 8; 9:16 →
+  1080×1920, 8 с при 24 fps → 193 кадра. Реальный рендер такого размера ещё не выполнялся.
+- Открытые блокеры: `wide_cinematic_concert_stage_scene_a_realistic.png` отсутствует
+  (NLB-28…30), стартовые кадры не утверждены (0 из 30), референсы ждут approve.
 - `runtime/ComfyUI/` — сторонний рантайм, не относится к логике проекта.
-- Репозиторий не инициализирован как git.
 
 ---
 

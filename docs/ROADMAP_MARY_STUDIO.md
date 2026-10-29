@@ -1,8 +1,9 @@
 # Roadmap Mary Studio
 
 > **Статус:** архитектура утверждена; WP-00, WP-00A, WP-00B, WP-00C, WP-01, WP-02,
-> WP-03, WP-04, WP-04A, WP-05, WP-05A и WP-06 выполнены (2026-10-26); WP-05B и WP-07 и далее
-> не начаты.
+> WP-03, WP-04, WP-04A, WP-05, WP-05A и WP-06 выполнены (2026-10-26); серия
+> «Ночной тыгыдык» — WP-N1, WP-N2, WP-N3, WP-N4 выполнены (2026-10-28); WP-05B,
+> WP-N5 и WP-07 и далее не начаты.
 > **Связанный документ:** `docs/PROPOSALS/MARY_STUDIO_INTEGRATION.md`,
 > `VIDEO-ORCHESTRATOR.md` v1.3.
 > **Принцип:** маленькие проверяемые пакеты; каждый следующий начинается только после
@@ -624,6 +625,256 @@ ComfyUI; утверждение S9–S10.
 **DoD:** восстановление из бэкапа на чистой БД; политика хранения задокументирована;
 worker не доступен из внешней сети.
 **Проверка:** тест восстановления; проверка `ss`/`lsof`; чек-лист.
+
+---
+
+### WP-N1. Импорт серии «Ночной тыгыдык» и preflight (выполнен 2026-10-28)
+
+**Объём:**
+
+- `backend/app/series_manifest.py` — разбор и валидация `Nine_Lives_Band_Render_Manifest.json`,
+  сверка с CSV-очередью, `snap8k1` для числа кадров.
+- `backend/app/series_import.py` + CLI `python -m app.import_series --dry-run|--apply` —
+  идемпотентный импорт в Project/Episode/Scene/Shot/PromptRevision/ShotReference,
+  provenance в `prompt_revisions.parameters_json`.
+- `backend/app/preflight.py` + CLI `python -m app.preflight` — отчёт готовности без записи.
+- `backend/app/api/series.py` — `POST /api/projects/{id}/series/import`,
+  `POST /api/projects/{id}/series/preflight` (см. `docs/DECISIONS.md` §4.2).
+
+**Миграции:** нет.
+**Зависит:** WP-04A, WP-06.
+**DoD:** повторный импорт даёт 0 новых строк; preflight перечисляет блокировки без
+фиктивных подстановок.
+**Проверка:** `pytest` — 159 passed; `alembic check` — no new operations; реальный прогон:
+30 шотов импортированы дважды без дублей, 5 из 7 референсов разрешены,
+`Guiness_clean.png` и `wide_cinematic_concert_stage_scene_a_realistic.png` отсутствуют,
+7 сюжетных шотов без стартовых кадров.
+
+---
+
+### WP-N2. Адаптер LTX-2.3 MLX I2V (выполнен 2026-10-28)
+
+**Объём:**
+
+- `pipeline/comfyui/ltx_adapter.py` — чистые функции без сети и БД: поиск нод по
+  `class_type`, `snap_frames` (8k+1), `resolve_size` (9:16 → 1080×1920), уникальный
+  `filename_prefix` вида `nlb/<shot_key>/<attempt_id>`, `bind_workflow`, `describe`,
+  `workflow_version` (sha256 канонического шаблона).
+- `tests/test_ltx_adapter.py` — 12 тестов на реальном `ltx23_mlx_q4_i2v.api.json`.
+
+**Миграции:** нет.
+**Зависит:** WP-00A, WP-N1.
+**DoD:** адаптер подставляет кадр, prompt, seed, параметры видео и уникальный префикс;
+шаблон не мутируется; отсутствие нод/входов — ошибка `BindingError`.
+**Проверка:** `pytest tests/test_ltx_adapter.py` — 12 passed.
+**Не подтверждено:** реальная совместимость 1080×1920 / 193 кадра проверяется только
+рендером; ответ `object_info` живого ComfyUI в этом пакете не снимался (сервис не запущен).
+
+### WP-N3. Реальный LTX-воркер (выполнен 2026-10-28)
+
+**Объём:**
+
+- `worker/client.py` — общий HTTP-клиент worker-протокола (`WorkerClient`, `ClaimedJob`,
+  `WorkerError`) и `probe_duration`, перенесённые из `worker/fake_worker.py` без изменения
+  поведения; fake-воркер импортирует их оттуда.
+- `worker/ltx_worker.py` — одна тяжёлая job за раз: скачивание стартового кадра с проверкой
+  sha256 → сборка payload через `ltx_adapter` → `/upload/image` → `/prompt` →
+  heartbeat на каждом опросе `/history` → `/view` → `ffprobe` → artifact → `complete`
+  с `workflow_version`, `model_hash`, `seed`.
+- `POST /api/worker/claim` теперь отдаёт `inputs.prompt` и `inputs.shot_key` из последней
+  motion-ревизии шота (соответствие `docs/ARCHITECTURE.md` §5.2). Схема БД не менялась.
+- `pipeline/comfyui/client.py`: у `wait_for_prompt` появились `on_poll` и `timeout`.
+- `tests/test_ltx_worker.py` — 12 тестов; `backend/tests/test_queue.py` — новый тест
+  на `inputs.prompt`/`shot_key`.
+
+**Миграции:** нет.
+**Зависит:** WP-06, WP-N1, WP-N2.
+**DoD:** воркер не пишет в БД напрямую; отсутствие кадра/промпта/8k+1 — явные коды ошибок;
+lease не истекает во время рендера; загруженный MP4 проверяется ffprobe до отправки.
+**Проверка:** `pytest tests/test_ltx_worker.py` — 12 passed; backend `pytest` — 163 passed.
+**Не подтверждено:** реальный прогон в ComfyUI (сервис не запускался), совместимость
+1080×1920/193 кадра, отмена рендера при потере lease (в WP-N3 не реализована).
+
+### WP-N4. Управляемый прогон серии (выполнен 2026-10-28)
+
+**Объём:**
+
+- Миграция `0007_render_series`: `series_runs` (`draft/running/paused/stopping/completed/
+  cancelled/failed`, `stop_on_error`, `total_items`, `started_at/finished_at`) и
+  `series_items` (`order`, `status`, `job_id`, `error_code`); `uq_series_items_run_order`,
+  `uq_series_items_run_shot`, CHECK на статусы и `"order" >= 1`.
+- `backend/app/api/series_runs.py` — создание/список прогонов, `start/pause/resume/
+  stop-after-current/cancel`, `GET /api/series/{run_id}` с `counts` и прогрессом job,
+  воркерский `POST /api/worker/series/next` (закрывает текущий item, создаёт ровно одну
+  job на следующий готовый шот, останавливается по `stop_on_error`).
+- `backend/app/notify.py` — best-effort баннер macOS (`osascript`, `MARY_DISABLE_NOTIFY=1`).
+- `worker/client.py` — `series_next`; `worker/ltx_worker.py` — `--series-run <id>` /
+  `--series`: цикл `series/next` → `claim` → одна тяжёлая job.
+- UI — страница `#/series/{id}` (прогресс, список шотов, управление, polling 3 с) и панель
+  «Прогон серии» на `#/shots` (создание с `shot_orders` и `stop_on_error`).
+- `backend/tests/test_series_runs.py` — 14 тестов; `tests/test_ltx_worker.py` — +4 теста
+  цикла серии; `backend/tests/test_schema.py` — новые таблицы в ожидаемом наборе.
+
+**Миграции:** `0007_render_series` (применена, `alembic check` — no new operations).
+**Зависит:** WP-06, WP-N1, WP-N3.
+**DoD:** `enum Shot.status` и `Event`-имена не расширялись; одна активная render-job на шот
+сохраняется; повторный `series/next` не создаёт вторую job; пауза/остановка не теряют
+текущий item; блокировки выводятся из данных.
+**Проверка:** backend `pytest` — 177 passed; `pytest tests/test_ltx_worker.py` — 16 passed;
+`uv run python -m pytest tests` (корень) — 43 passed; UI `npm run build`.
+**Не подтверждено:** реальный прогон серии в ComfyUI (сервис не запускался); отмена
+текущего рендера в ComfyUI; баннер macOS проверяется только вручную [ПРОВЕРИТЬ].
+
+**Следующие пакеты серии:**
+
+| Пакет | Содержание |
+|---|---|
+| WP-N5 | approve/reject попытки + чек-лист ручного QC |
+
+**Ворота:** 1 калибровочный рендер → 2 тестовых шота → серия из 30 только по отдельному
+разрешению человека. Merge/push — также по отдельному разрешению.
+
+### Калибровка 2026-10-28 (NLB-01)
+
+**Попытка 1 — 1080×1920, остановлена по ресурсам.** Прогон `series_run 13c86ba0…` →
+`ltx_worker --series-run`:
+
+- сквозной путь сработал: `start` → `series/next` → `claim` → upload кадра → `/prompt` →
+  heartbeat 0.2…0.9 → рендер в ComfyUI; при ошибке прогон корректно ушёл в `paused`
+  (`reason: job_failed`), item — `failed`.
+- кадр `01_vocalist_clean.png` (768×820) прошёл как стартовый через
+  `POST /api/shots/{id}/keyframe` + `promote-keyframe`, без генерации изображения.
+- 193 кадра / 24 fps / `dgrauet/ltx-2.3-mlx-q4` приняты воркером и ComfyUI без ошибок
+  валидации.
+
+**Блокер (почему остановлено):**
+
+1. Two-stage half-res снапит стороны до кратных 64: запрошенные 1080×1920 фактически
+   рендерятся как **1024×1920** (8:15, не 9:16). Лог ComfyUI:
+   `output will be 1024x1920 (requested 1080x1920). Use --single-stage for exact dims.`
+2. Stage 1 (half-res, 12000 токенов): 8 шагов ≈ 22 мин (168 с/шаг). Stage 2
+   (48000 токенов) не завершил ни одного шага за 24 мин; swap вырос до 36.5 из 37.9 ГБ
+   на 16 ГБ RAM → thrash. ComfyUI перезапущен, очередь пуста, память освобождена.
+
+**Попытка 2 — 576×1024, выполнена.** Прогон `series_run 5f6c5705…` (один шот, `stop_on_error`),
+`ltx_worker --series-run --once --long-side 1024`:
+
+- job `7735aa39…` → attempt `53878f4a…` → artifact `9cd53803…`
+  (sha256 `32ba9936…`, 1 778 621 байт, `blobs/32/32ba9936…mp4`);
+- `ffprobe`: h264, **576×1024**, `24/1`, 193 кадра, 8.04 с — параметры совпадают с
+  запрошенными; два кратных 64 размера, снап не сработал;
+- ComfyUI: stage 1 — 3600 видео + 201 аудио токенов, 8 шагов за 7:07 (≈53 с/шаг);
+  stage 2 — 14400 видео токенов, 3 шага: первый 4:39, далее ≈197 с/шаг; полный рендер
+  ≈ 18 мин. Swap пик 18.5 из 19.4 ГБ (файл подкачки вырос), thrash не возник;
+  после рендера swap 8.4 из 9.2 ГБ;
+- прогон закрыт `series/next` → `completed` (1 completed, 0 failed, 0 skipped).
+
+**Решение:** серия рендерится в **576×1024** (`--long-side 1024`), см. `docs/DECISIONS.md`
+§4.5. Апскейл до 1080×1920 на сборке не реализован.
+
+**Не проверено:** качество I2V (нужен просмотр человеком), поведение `--single-stage`,
+апскейл на сборке.
+
+**Следующий шаг:** 2 тестовых шота (отдельный прогон) после приёмки качества калибровки;
+серия из 30 — только по отдельному разрешению.
+
+### Тестовые шоты NLB-02 и NLB-03 (2026-10-28, выполнены)
+
+- Стартовые кадры: `POST /api/shots/{id}/keyframe` из уже утверждённого референса
+  `01_vocalist_clean.png` (`fdd8d183…`, по манифесту это кадр для NLB-02/03) →
+  `promote-keyframe` (attempt `4aeffaed…` и `d7fbc9ca…`). Новых approve не потребовалось.
+- Прогон `series_run 7b0750a4…` (`shot_orders: [2, 3]`, `stop_on_error`),
+  `ltx_worker --series-run --long-side 1024` без `--once`: воркер сам закрыл item 1,
+  взял item 2 и завершил прогон (`completed`, 2 completed, 0 failed).
+- Артефакты: NLB-02 — attempt `9e124b8c…` / artifact `abb45f74…` (1 691 054 байта);
+  NLB-03 — attempt `f73650c5…` / artifact `cbc1f01d…` (1 755 673 байта).
+  `ffprobe` для обоих: h264, 576×1024, `24/1`, 193 кадра, 8.04 с.
+- Время: ~19 мин на шот (stage 1 ≈ 7 мин, stage 2 ≈ 11 мин); очередь ComfyUI пуста,
+  swap после прогона 7.6 из 9.2 ГБ.
+- Наблюдение: `Shot.status` остаётся `prompt_ready` после успешного рендера —
+  видео-попытка не меняет статус шота, пока её не утвердят
+  (`approved_attempt_id` пуст). Это ожидаемо для текущей модели, но означает, что
+  «готово к монтажу» выводится из наличия `completed` видео-попытки, а не из статуса.
+
+### Тестовый шот NLB-31 — танец и реплика (2026-10-28, выполнен)
+
+Запрос человека: проверить не медленное раскрытие пасти, а танцевальное па и живую
+мимику с репликой «Meanwhile I am unstoppable? But actually unstable.».
+
+- Шот создан в существующей сцене: `POST /api/scenes/{scene_id}/shots`
+  (`sequence_no=31`, 193 кадра, 24 fps), id `815ff3fb…`. Motion-ревизия v1 вставлена
+  напрямую через модели: эндпоинта создания prompt-ревизий нет, ревизии пишет только
+  импорт. Миграций и изменений API-контрактов не было.
+  `parameters_json = {shot_key: NLB-31, reference_filename: 01_vocalist_clean.png,
+  source: manual_dance_test_2026-10-28}`.
+- Промпт: `Rock vocalist, sable Burmese cat in a studded leather jacket; performs an
+  energetic dance move: rhythmic shoulder sway and hip bounce, head bobbing on the beat,
+  free paw punching the air while the other paw holds the chrome microphone; lively
+  expressive face with quick jaw, whisker and ear movement, mouthing the line "Meanwhile I
+  am unstoppable? But actually unstable."; red stage lighting, moving light beams; stable
+  medium shot, one continuous shot. Preserve the exact reference identity, costume,
+  instrument and stage. Photorealistic, continuous motion, no captions, no morphing,
+  no extra paws.`
+- Стартовый кадр — approved `01_vocalist_clean.png` (`fdd8d183…`) →
+  `keyframe` (attempt `a40b53db…`) → `promote-keyframe`; на шот добавлена
+  `shot_reference` (`purpose=character`).
+- Прогон `series_run b84a6983…` (один шот), `ltx_worker --series-run --once --long-side 1024`:
+  job `be9cb599…` → attempt `2136447d…` → artifact `19fb5662…`
+  (sha256 `46a2fd21…`, 3 481 956 байт). `ffprobe`: h264, 576×1024, `24/1`, 193 кадра,
+  8.04 с; прогон закрыт `series/next` → `completed`.
+- Ограничение: широкого кадра сцены в проекте нет (единственный approved-референс —
+  крупный план), поэтому танцевальное движение читается только в верхней части корпуса.
+  Аудио: LTX генерирует дорожку — `ffprobe` показывает второй поток `aac`, 48 kHz, stereo,
+  8.01 с у всех четырёх роликов (NLB-01/02/03/31); у NLB-31 `volumedetect` mean −21.7 dB,
+  max −5.3 dB. Наличие внятной речи и совпадение артикуляции с текстом реплики
+  **[ПРОВЕРИТЬ]** прослушиванием.
+- **Отклонение:** `python -m app.preflight` теперь даёт
+  `[WARN] shots: в сцене 31 шотов при 30 в манифесте`; остальные проверки без изменений
+  (`prompts` — OK, референсы/кадры — как раньше). Серия 30 рендерится по явным
+  `shot_orders`, тестовый шот в неё не попадает.
+
+### WP-08 — имя прогона и подготовка серии «NLB-single» (2026-10-28, выполнен)
+
+- Миграция `0008_series_run_title`: `series_runs.title TEXT NULL` (`ADD COLUMN`),
+  downgrade удаляет колонку. `alembic check` — no new operations.
+- API: `SeriesRunCreate.title` (1…200 символов), `title` в ответе создания, в списке
+  прогонов и в детали. UI: поле «Название прогона» на `#/shots`, заголовок `#/series/{id}`
+  и подпись в списке прогонов. Тест `test_run_title_is_stored_and_returned`.
+- Подготовка серии (решение человека: референсы и стартовые кадры утверждает агент):
+  пять референсов переведены в `approved` — `02_guitarist_clean.png`, `03_drummer_clean.png`,
+  `04_bassist_clean.png`, `05_keyboardist_clean.png`, `Guiness_clean.png` (лист породы).
+  Стартовые кадры 4–27 созданы по референсу своего шота (`keyframe` +
+  `promote-keyframe`, по одному attempt на шот) — 24 шота.
+- Готовность по данным после подготовки: `READY 28 [1…27, 31]`,
+  `BLOCKED 3 (missing_start_frame) [28, 29, 30]` — референса
+  `wide_cinematic_concert_stage_scene_a_realistic.png` в проекте нет; человек пришлёт файл.
+- Создан прогон **«NLB-single»** (`85e04a00-202a-44f2-ac0f-1fab86d37b43`), `draft`,
+  24 item (шоты 4–27), `stop_on_error=true`. В него не включены: 1–3 (видео уже принято
+  человеком) и 31 (тестовый шот); 28–30 — после появления референса.
+- Оценка времени: 24 × ~19–22 мин ≈ 7.5–9 ч непрерывного рендера в 576×1024.
+- Прогон выполнен: старт 2026-10-28 17:45:58, финиш 2026-10-29 00:51:02 (7 ч 05 мин),
+  `completed 24 / failed 0 / skipped 0`, воркер вышел сам после `completed`. Средний темп
+  17.7 мин/шот (первый шот 19.1 мин, дальше 17.1–19.3). Все 24 MP4 проверены `ffprobe`:
+  h264, 576×1024, 24/1, 193 кадра, 8.041667 с, аудио `aac` — отклонений нет.
+  Суммарный объём 61.6 МБ. Артефакты NLB-04…27 (`c6fde69f…`…`8fa55b3a…`), `Shot.status`
+  остаётся `prompt_ready` до утверждения попытки (утверждение — WP-N5).
+- Широкий референс получен (2026-10-29): `docs/cats/Feline Rock Band Under Neon Lights.png`
+  (1536×1024, sha256 `a64e8ba1…`) — это и есть
+  `wide_cinematic_concert_stage_scene_a_realistic.png`. Загружен через
+  `POST /api/projects/{id}/references?kind=uploaded` → asset `e7af9bb1…`; в `metadata_json`
+  добавлено `original_name` = имя из манифеста (иначе `preflight` не сопоставляет имя: при
+  upload API имя файла не сохраняется). Человек разрешил approve агенту — asset переведён в
+  `approved` через `POST /api/reference-assets/{id}/approve`.
+- Стартовые кадры 28–30 созданы по этому референсу (`keyframe` + `promote-keyframe`,
+  attempts `fbc1d956…`, `5b9b594a…`, `004f6607…`); ссылка на референс добавлена в каждый шот
+  (`purpose=location`). Preflight после этого: `references` — OK (7 из 7 approved),
+  `start_frames` — 30 из 30.
+- Решение по аспекту (человек, 2026-10-29): общие планы 28–30 рендерятся в 16:9
+  (1024×576), а не 9:16 — зафиксировано в `docs/DECISIONS.md` §4.5 п.5.
+- Создан прогон **«NLB-single wide (28-30)»** (`ce0c1bfa-c61c-434d-a0fa-47d95861c44e`),
+  3 item (шоты 28, 29, 30), `stop_on_error=true`, запущен воркером
+  `--aspect-ratio 16:9 --long-side 1024`. В очереди ComfyUI подтверждено `1024 x 576, 193, 24.0`.
+  Ожидаемое время ≈ 55–65 мин.
 
 ---
 

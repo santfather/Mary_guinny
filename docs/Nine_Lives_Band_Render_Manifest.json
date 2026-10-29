@@ -1,0 +1,597 @@
+{
+  "schema_version": "1.0",
+  "project": "The Nine Lives Band",
+  "episode": "Ночной тыгыдык",
+  "source_document": "Nine_Lives_Band_Production_Plan(1).docx",
+  "source_version": "1.0",
+  "audio_master_duration_seconds": 204,
+  "target_aspect_ratio": "9:16",
+  "target_fps": null,
+  "generator": "ComfyUI LTX2 MLX Image-to-Video",
+  "concurrency": 1,
+  "execution_policy": {
+    "stop_on_error": true,
+    "max_automatic_retries_for_transient_errors": 1,
+    "verify_output_with_ffprobe": true,
+    "require_user_approval_before_real_render": true,
+    "do_not_queue_blocked_shots": true
+  },
+  "workflow_template": {
+    "path_hint": "comfyui-workflows/ltx23_mlx_q4_i2v.api.json",
+    "verified_node_bindings": false,
+    "notes": "Do not assume node IDs, duration or portrait support; inspect actual API workflow."
+  },
+  "shots": [
+    {
+      "order": 1,
+      "shot_key": "NLB-01",
+      "title": "Вокалист — агрессивный куплет",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_01"
+    },
+    {
+      "order": 2,
+      "shot_key": "NLB-02",
+      "title": "Вокалист — крик припева",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_02"
+    },
+    {
+      "order": 3,
+      "shot_key": "NLB-03",
+      "title": "Вокалист — крупный план",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_03"
+    },
+    {
+      "order": 4,
+      "shot_key": "NLB-04",
+      "title": "Вокалист — мрачный бридж",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_04"
+    },
+    {
+      "order": 5,
+      "shot_key": "NLB-05",
+      "title": "Вокалист — вокальный акцент",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_05"
+    },
+    {
+      "order": 6,
+      "shot_key": "NLB-06",
+      "title": "Вокалист — финальный крик",
+      "category": "performer",
+      "reference_filename_from_plan": "01_vocalist_clean.png",
+      "start_frame_filename": "01_vocalist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock vocalist, sable Burmese cat; sings into chrome microphone, expressive natural mouth movements and subtle head nods; red stage lighting; stable close-up, one continuous shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_06"
+    },
+    {
+      "order": 7,
+      "shot_key": "NLB-07",
+      "title": "Гитарист — тяжёлый рифф",
+      "category": "performer",
+      "reference_filename_from_plan": "02_guitarist_clean.png",
+      "start_frame_filename": "02_guitarist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock guitarist, same sable Burmese cat; short rhythmic picking paw movements on red electric guitar, other paw remains on neck; amber stage light, stable medium shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_07"
+    },
+    {
+      "order": 8,
+      "shot_key": "NLB-08",
+      "title": "Гитарист — соло",
+      "category": "performer",
+      "reference_filename_from_plan": "02_guitarist_clean.png",
+      "start_frame_filename": "02_guitarist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock guitarist, same sable Burmese cat; short rhythmic picking paw movements on red electric guitar, other paw remains on neck; amber stage light, stable medium shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_08"
+    },
+    {
+      "order": 9,
+      "shot_key": "NLB-09",
+      "title": "Гитарист — крупно струны",
+      "category": "performer",
+      "reference_filename_from_plan": "02_guitarist_clean.png",
+      "start_frame_filename": "02_guitarist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock guitarist, same sable Burmese cat; short rhythmic picking paw movements on red electric guitar, other paw remains on neck; amber stage light, stable medium shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_09"
+    },
+    {
+      "order": 10,
+      "shot_key": "NLB-10",
+      "title": "Гитарист — финальный рифф",
+      "category": "performer",
+      "reference_filename_from_plan": "02_guitarist_clean.png",
+      "start_frame_filename": "02_guitarist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock guitarist, same sable Burmese cat; short rhythmic picking paw movements on red electric guitar, other paw remains on neck; amber stage light, stable medium shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_10"
+    },
+    {
+      "order": 11,
+      "shot_key": "NLB-11",
+      "title": "Барабанщик — основной ритм",
+      "category": "performer",
+      "reference_filename_from_plan": "03_drummer_clean.png",
+      "start_frame_filename": "03_drummer_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock drummer, same sable Burmese cat; controlled alternating short drumstick strikes, subtle head bob, blue concert light; fixed frontal camera. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_11"
+    },
+    {
+      "order": 12,
+      "shot_key": "NLB-12",
+      "title": "Барабанщик — барабанная сбивка",
+      "category": "performer",
+      "reference_filename_from_plan": "03_drummer_clean.png",
+      "start_frame_filename": "03_drummer_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock drummer, same sable Burmese cat; controlled alternating short drumstick strikes, subtle head bob, blue concert light; fixed frontal camera. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_12"
+    },
+    {
+      "order": 13,
+      "shot_key": "NLB-13",
+      "title": "Барабанщик — крупный план",
+      "category": "performer",
+      "reference_filename_from_plan": "03_drummer_clean.png",
+      "start_frame_filename": "03_drummer_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock drummer, same sable Burmese cat; controlled alternating short drumstick strikes, subtle head bob, blue concert light; fixed frontal camera. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_13"
+    },
+    {
+      "order": 14,
+      "shot_key": "NLB-14",
+      "title": "Барабанщик — финальный удар",
+      "category": "performer",
+      "reference_filename_from_plan": "03_drummer_clean.png",
+      "start_frame_filename": "03_drummer_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock drummer, same sable Burmese cat; controlled alternating short drumstick strikes, subtle head bob, blue concert light; fixed frontal camera. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_14"
+    },
+    {
+      "order": 15,
+      "shot_key": "NLB-15",
+      "title": "Басист — медленный грув",
+      "category": "performer",
+      "reference_filename_from_plan": "04_bassist_clean.png",
+      "start_frame_filename": "04_bassist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock bassist, same sable Burmese cat; slow steady plucking, relaxed body sway, black bass guitar, purple lights; very slow camera slide. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_15"
+    },
+    {
+      "order": 16,
+      "shot_key": "NLB-16",
+      "title": "Басист — ритмический кач",
+      "category": "performer",
+      "reference_filename_from_plan": "04_bassist_clean.png",
+      "start_frame_filename": "04_bassist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock bassist, same sable Burmese cat; slow steady plucking, relaxed body sway, black bass guitar, purple lights; very slow camera slide. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_16"
+    },
+    {
+      "order": 17,
+      "shot_key": "NLB-17",
+      "title": "Басист — крупный план баса",
+      "category": "performer",
+      "reference_filename_from_plan": "04_bassist_clean.png",
+      "start_frame_filename": "04_bassist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock bassist, same sable Burmese cat; slow steady plucking, relaxed body sway, black bass guitar, purple lights; very slow camera slide. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_17"
+    },
+    {
+      "order": 18,
+      "shot_key": "NLB-18",
+      "title": "Клавишник — мелодия",
+      "category": "performer",
+      "reference_filename_from_plan": "05_keyboardist_clean.png",
+      "start_frame_filename": "05_keyboardist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock keyboardist, same sable Burmese cat; gentle alternating front-paw taps on red synthesizer, subtle head tilt, silver jacket, pink-blue lights. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_18"
+    },
+    {
+      "order": 19,
+      "shot_key": "NLB-19",
+      "title": "Клавишник — музыкальный акцент",
+      "category": "performer",
+      "reference_filename_from_plan": "05_keyboardist_clean.png",
+      "start_frame_filename": "05_keyboardist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock keyboardist, same sable Burmese cat; gentle alternating front-paw taps on red synthesizer, subtle head tilt, silver jacket, pink-blue lights. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_19"
+    },
+    {
+      "order": 20,
+      "shot_key": "NLB-20",
+      "title": "Клавишник — клавиши крупно",
+      "category": "performer",
+      "reference_filename_from_plan": "05_keyboardist_clean.png",
+      "start_frame_filename": "05_keyboardist_clean.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Rock keyboardist, same sable Burmese cat; gentle alternating front-paw taps on red synthesizer, subtle head tilt, silver jacket, pink-blue lights. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_20"
+    },
+    {
+      "order": 21,
+      "shot_key": "NLB-21",
+      "title": "Сюжет — Спящие люди",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Ночной кот наблюдает за спящими людьми; медленный поворот головы, лунный свет. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_21"
+    },
+    {
+      "order": 22,
+      "shot_key": "NLB-22",
+      "title": "Сюжет — Фантик",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот трогает шуршащий фантик одной лапой, фантик скользит по полу. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_22"
+    },
+    {
+      "order": 23,
+      "shot_key": "NLB-23",
+      "title": "Сюжет — Тыгыдык",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот быстро бежит на четырёх лапах по ночному коридору, камера низко. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_23"
+    },
+    {
+      "order": 24,
+      "shot_key": "NLB-24",
+      "title": "Сюжет — Чашка",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот медленно толкает чашку к краю стола, не показывать падение. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_24"
+    },
+    {
+      "order": 25,
+      "shot_key": "NLB-25",
+      "title": "Сюжет — Король дивана",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот величественно лежит на диване, потягивается и смотрит в объектив. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_25"
+    },
+    {
+      "order": 26,
+      "shot_key": "NLB-26",
+      "title": "Сюжет — Мартовская луна",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот сидит у окна под луной, медленно поднимает голову. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_26"
+    },
+    {
+      "order": 27,
+      "shot_key": "NLB-27",
+      "title": "Сюжет — Где моя еда",
+      "category": "story",
+      "reference_filename_from_plan": "Guiness_clean.png",
+      "start_frame_filename": null,
+      "identity_reference_filename": "Guiness_clean.png",
+      "prompt_original": "Photorealistic sable Burmese cat with dark chocolate facial mask and yellow-green eyes. Кот перед пустой миской поднимает голову и требовательно мяукает. Natural feline anatomy, one continuous cinematic shot, no text, no extra limbs.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "blocked_start_frame",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_27"
+    },
+    {
+      "order": 28,
+      "shot_key": "NLB-28",
+      "title": "Группа — Открытие концерта",
+      "category": "ensemble",
+      "reference_filename_from_plan": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "start_frame_filename": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Five identical Burmese cats as the same rock band, each remains at their own instrument; subtle synchronized stage movements, slow smoke and lights, wide static shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_28"
+    },
+    {
+      "order": 29,
+      "shot_key": "NLB-29",
+      "title": "Группа — Перед финальным припевом",
+      "category": "ensemble",
+      "reference_filename_from_plan": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "start_frame_filename": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Five identical Burmese cats as the same rock band, each remains at their own instrument; subtle synchronized stage movements, slow smoke and lights, wide static shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_29"
+    },
+    {
+      "order": 30,
+      "shot_key": "NLB-30",
+      "title": "Группа — Финальный общий план",
+      "category": "ensemble",
+      "reference_filename_from_plan": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "start_frame_filename": "wide_cinematic_concert_stage_scene_a_realistic.png",
+      "identity_reference_filename": null,
+      "prompt_original": "Five identical Burmese cats as the same rock band, each remains at their own instrument; subtle synchronized stage movements, slow smoke and lights, wide static shot. Preserve the exact reference identity, costume, instrument and stage. Photorealistic, continuous motion, no captions, no morphing, no extra paws.",
+      "target_duration_seconds": [
+        7,
+        8
+      ],
+      "status": "needs_preflight",
+      "approved": false,
+      "seed": null,
+      "workflow_version": null,
+      "output_name_prefix": "NLB_30"
+    }
+  ],
+  "assembly_note": "Music synchronization and final assembly in CapCut; source timecodes provisional."
+}
