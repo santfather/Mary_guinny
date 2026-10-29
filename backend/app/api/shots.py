@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_session, require_project
+from app.api.deps import get_session, get_store, require_project
 from app.api.schemas import ReferenceOut
 from app.api.shot_schemas import (
     AttemptOut,
@@ -26,6 +26,7 @@ from app.api.shot_schemas import (
     ShotSummary,
 )
 from app.models import (
+    ACTIVE_JOB_STATUSES,
     Artifact,
     Episode,
     Job,
@@ -38,17 +39,9 @@ from app.models import (
     ReferenceAsset,
     VisualScenePlan,
 )
+from app.storage import BlobStore, sha256_file
 
 router = APIRouter(prefix="/api", tags=["shots"])
-
-ACTIVE_JOB_STATUSES = (
-    "pending",
-    "leased",
-    "running",
-    "retry_wait",
-    "cancel_requested",
-    "lease_expired",
-)
 
 
 def require_scene(session: Session, scene_id: uuid.UUID) -> Scene:
@@ -402,6 +395,105 @@ def _keyframe_parameters(
     return parameters
 
 
+REFERENCE_KEYFRAME_WORKFLOW = "approved-reference-v1"
+
+
+def _existing_reference_keyframe(
+    session: Session, shot_id: uuid.UUID, asset_id: uuid.UUID
+) -> Artifact | None:
+    """Идемпотентность: та же approved-ссылка не создаёт вторую попытку."""
+
+    attempts = session.scalars(
+        select(RenderAttempt)
+        .where(
+            RenderAttempt.shot_id == shot_id,
+            RenderAttempt.kind == "keyframe",
+            RenderAttempt.workflow_version == REFERENCE_KEYFRAME_WORKFLOW,
+        )
+        .order_by(RenderAttempt.created_at)
+    )
+    for attempt in attempts:
+        if (attempt.parameters or {}).get("reference_asset_id") != str(asset_id):
+            continue
+        artifact = session.scalar(
+            select(Artifact)
+            .where(Artifact.attempt_id == attempt.id)
+            .order_by(Artifact.created_at.desc())
+            .limit(1)
+        )
+        if artifact is not None:
+            return artifact
+    return None
+
+
+def _keyframe_from_reference(
+    session: Session, shot: Shot, asset_id: uuid.UUID, store: BlobStore
+) -> KeyframeOut:
+    """Стартовый кадр из утверждённого референса — без генерации изображения.
+
+    Назначение кадра по-прежнему делает только `promote-keyframe`.
+    """
+
+    asset = session.get(ReferenceAsset, asset_id)
+    if asset is None or asset.project_id != shot_project_id(session, shot):
+        raise HTTPException(status_code=404, detail="reference asset not found")
+    if asset.status != "approved":
+        raise HTTPException(status_code=409, detail="reference asset must be approved")
+    if not store.exists(asset.storage_key):
+        raise HTTPException(status_code=409, detail="reference asset file is missing")
+    stored_path = store.resolve(asset.storage_key)
+    if sha256_file(stored_path) != asset.sha256:
+        raise HTTPException(
+            status_code=409, detail="reference asset file sha256 mismatch"
+        )
+
+    existing = _existing_reference_keyframe(session, shot.id, asset.id)
+    if existing is not None:
+        return KeyframeOut(
+            attempt_id=existing.attempt_id,
+            artifact_id=existing.id,
+            artifact_content_url=f"/api/artifacts/{existing.id}/content",
+            composition_revision=None,
+            status="completed",
+        )
+
+    attempt = RenderAttempt(
+        shot_id=shot.id,
+        kind="keyframe",
+        status="completed",
+        input_artifact_ids=[],
+        workflow_version=REFERENCE_KEYFRAME_WORKFLOW,
+        parameters={
+            "reference_asset_id": str(asset.id),
+            "reference_sha256": asset.sha256,
+            "reference_original_name": (asset.metadata_json or {}).get("original_name"),
+            "source": "approved_reference",
+        },
+    )
+    session.add(attempt)
+    session.flush()
+    artifact = Artifact(
+        attempt_id=attempt.id,
+        source="attempt",
+        kind="keyframe",
+        storage_key=asset.storage_key,
+        sha256=asset.sha256,
+        bytes=stored_path.stat().st_size,
+        mime_type=asset.mime_type,
+    )
+    session.add(artifact)
+    session.commit()
+    session.refresh(attempt)
+    session.refresh(artifact)
+    return KeyframeOut(
+        attempt_id=attempt.id,
+        artifact_id=artifact.id,
+        artifact_content_url=f"/api/artifacts/{artifact.id}/content",
+        composition_revision=None,
+        status=attempt.status,
+    )
+
+
 @router.post(
     "/shots/{shot_id}/keyframe",
     response_model=KeyframeOut,
@@ -411,8 +503,16 @@ def create_keyframe(
     shot_id: uuid.UUID,
     payload: KeyframeCreate,
     session: Session = Depends(get_session),
+    store: BlobStore = Depends(get_store),
 ) -> KeyframeOut:
     shot = require_shot(session, shot_id)
+    if payload.reference_asset_id is not None:
+        if payload.composition_revision is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="specify either composition_revision or reference_asset_id",
+            )
+        return _keyframe_from_reference(session, shot, payload.reference_asset_id, store)
     statement = select(ShotComposition).where(ShotComposition.shot_id == shot.id)
     if payload.composition_revision is not None:
         composition = session.scalar(

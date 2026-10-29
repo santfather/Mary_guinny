@@ -224,3 +224,122 @@ def test_keyframe_promote_and_render_gate(
         ).status_code
         == 404
     )
+
+
+def _keyframe_from_reference(client, shot_id, asset_id):
+    return client.post(
+        f"/api/shots/{shot_id}/keyframe",
+        json={"reference_asset_id": str(asset_id)},
+    )
+
+
+def test_keyframe_from_approved_reference_without_generation(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    make_png_reference,
+) -> None:
+    reference = make_png_reference(
+        project_id=project_id, character_id=character_id, status="draft"
+    )
+
+    draft = _keyframe_from_reference(api_client, shot_id, reference)
+    assert draft.status_code == 409
+    assert "approved" in draft.json()["detail"]
+
+    assert api_client.post(f"/api/reference-assets/{reference}/approve").status_code == 200
+
+    created = _keyframe_from_reference(api_client, shot_id, reference)
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["composition_revision"] is None
+    assert payload["status"] == "completed"
+
+    repeated = _keyframe_from_reference(api_client, shot_id, reference)
+    assert repeated.status_code == 201
+    assert repeated.json()["attempt_id"] == payload["attempt_id"]
+    assert repeated.json()["artifact_id"] == payload["artifact_id"]
+
+    attempt = conn.execute(
+        text(
+            "SELECT workflow_version, parameters, input_artifact_ids"
+            " FROM render_attempts WHERE id = :id"
+        ),
+        {"id": payload["attempt_id"]},
+    ).one()
+    assert attempt.workflow_version == "approved-reference-v1"
+    assert attempt.parameters["reference_asset_id"] == str(reference)
+    assert attempt.parameters["source"] == "approved_reference"
+    assert attempt.input_artifact_ids == []
+
+    reference_sha = conn.execute(
+        text("SELECT sha256 FROM reference_assets WHERE id = :id"), {"id": reference}
+    ).scalar_one()
+    artifact = conn.execute(
+        text("SELECT source, sha256, storage_key FROM artifacts WHERE id = :id"),
+        {"id": payload["artifact_id"]},
+    ).one()
+    assert artifact.source == "attempt"
+    assert artifact.sha256 == reference_sha
+
+    # Адаптер и этот эндпоинт не назначают кадр сами.
+    shot = api_client.get(f"/api/shots/{shot_id}").json()
+    assert shot["start_keyframe_artifact_id"] is None
+
+    promoted = api_client.post(
+        f"/api/shots/{shot_id}/attempts/{payload['attempt_id']}/promote-keyframe"
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["start_keyframe_artifact_id"] == payload["artifact_id"]
+
+    queued = api_client.post(f"/api/shots/{shot_id}/render")
+    assert queued.status_code == 202
+
+
+def test_keyframe_from_reference_guards(
+    api_client,
+    conn: Connection,
+    project_id,
+    second_project_id,
+    shot_id,
+    character_id,
+    make_png_reference,
+    make_reference,
+) -> None:
+    foreign = make_png_reference(project_id=second_project_id)
+    assert (
+        _keyframe_from_reference(api_client, shot_id, foreign).status_code == 404
+    )
+    assert (
+        _keyframe_from_reference(api_client, shot_id, uuid.uuid4()).status_code == 404
+    )
+
+    local = make_png_reference(project_id=project_id, character_id=character_id)
+    both = api_client.post(
+        f"/api/shots/{shot_id}/keyframe",
+        json={"reference_asset_id": str(local), "composition_revision": 1},
+    )
+    assert both.status_code == 422
+
+    no_file = make_reference(
+        project_id=project_id, character_id=character_id, status="approved"
+    )
+    missing = _keyframe_from_reference(api_client, shot_id, no_file)
+    assert missing.status_code == 409
+    assert "missing" in missing.json()["detail"]
+
+    # approved-запись неизменяема, поэтому неверный sha256 задаётся новой записью.
+    broken = make_reference(
+        project_id=project_id,
+        status="approved",
+        storage_key=conn.execute(
+            text("SELECT storage_key FROM reference_assets WHERE id = :id"),
+            {"id": local},
+        ).scalar_one(),
+        sha256="0" * 64,
+    )
+    mismatch = _keyframe_from_reference(api_client, shot_id, broken)
+    assert mismatch.status_code == 409
+    assert "sha256" in mismatch.json()["detail"]

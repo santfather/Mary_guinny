@@ -204,14 +204,17 @@ class CompositionRenderOut(BaseModel):
 
 
 class KeyframeCreate(BaseModel):
+    """Стартовый кадр: из утверждённой композиции или из approved-референса."""
+
     composition_revision: int | None = Field(default=None, ge=1)
+    reference_asset_id: uuid.UUID | None = None
 
 
 class KeyframeOut(BaseModel):
     attempt_id: uuid.UUID
     artifact_id: uuid.UUID
     artifact_content_url: str
-    composition_revision: int
+    composition_revision: int | None
     status: str
 
 

@@ -13,6 +13,12 @@ from app.api.library import router as library_router
 from app.api.projects import router as projects_router
 from app.api.reference_assets import router as reference_assets_router
 from app.api.scene_plans import router as scene_plans_router
+from app.api.series import router as series_router
+from app.api.series_runs import (
+    project_router as series_runs_project_router,
+    run_router as series_runs_router,
+    worker_router as series_runs_worker_router,
+)
 from app.api.shots import router as shots_router
 from app.api.worker import router as worker_router
 from app.config import Settings
@@ -32,8 +38,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(shots_router)
     app.include_router(compositions_router)
     app.include_router(scene_plans_router)
+    app.include_router(series_router)
+    app.include_router(series_runs_project_router)
+    app.include_router(series_runs_router)
     app.include_router(jobs_router)
     app.include_router(worker_router)
+    app.include_router(series_runs_worker_router)
 
     @app.get("/api/health")
     @app.get("/health")

@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -49,6 +50,16 @@ JOB_STATUSES = (
 )
 ATTEMPT_KINDS = ("keyframe", "video", "postprocess")
 ATTEMPT_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
+# Статусы, при которых render-job считается активным для шота
+# (совпадает с частичным уникальным индексом `one_active_render_per_shot`).
+ACTIVE_JOB_STATUSES = (
+    "pending",
+    "leased",
+    "running",
+    "retry_wait",
+    "cancel_requested",
+    "lease_expired",
+)
 ARTIFACT_SOURCES = ("attempt", "composition", "upload", "import")
 REFERENCE_ASSET_KINDS = (
     "character_reference",
@@ -76,6 +87,16 @@ EVENT_NAMES = (
     "lease_expired",
     "resumed",
 )
+SERIES_RUN_STATUSES = (
+    "draft",
+    "running",
+    "paused",
+    "stopping",
+    "completed",
+    "cancelled",
+    "failed",
+)
+SERIES_ITEM_STATUSES = ("pending", "running", "completed", "failed", "skipped")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -761,3 +782,67 @@ class ShotCompositionLayer(Base):
     scale: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="1")
     rotation: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="0")
     opacity: Mapped[Decimal] = mapped_column(Numeric(4, 3), nullable=False, server_default="1")
+
+
+class SeriesRun(TimestampMixin, Base):
+    """Управляемый последовательный прогон серии (WP-N4).
+
+    Прогон хранит намерение человека (start/pause/stop-after-current) и прогресс;
+    jobs и артефакты остаются в общих таблицах. Двух тяжёлых job одновременно
+    не бывает: следующий item запускается только после завершения текущего.
+    """
+
+    __tablename__ = "series_runs"
+    __table_args__ = (
+        CheckConstraint(_in_list("status", SERIES_RUN_STATUSES), name="ck_series_runs_status"),
+        CheckConstraint("total_items >= 0", name="ck_series_runs_total_items_non_negative"),
+        Index("ix_series_runs_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    # Человеческое имя прогона (WP-08), например «NLB-single».
+    title: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    # execution_policy.stop_on_error из манифеста серии.
+    stop_on_error: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    total_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SeriesItem(Base):
+    """Один шот внутри прогона серии (WP-N4)."""
+
+    __tablename__ = "series_items"
+    __table_args__ = (
+        UniqueConstraint("run_id", "order", name="uq_series_items_run_order"),
+        UniqueConstraint("run_id", "shot_id", name="uq_series_items_run_shot"),
+        CheckConstraint('"order" >= 1', name="ck_series_items_order_positive"),
+        CheckConstraint(_in_list("status", SERIES_ITEM_STATUSES), name="ck_series_items_status"),
+        Index("ix_series_items_run_status", "run_id", "status"),
+        Index("ix_series_items_job_id", "job_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("series_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shots.id"), nullable=False
+    )
+    order: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id")
+    )
+    error_code: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "shot_composition_layers",
     "visual_scene_plans",
     "events",
+    "series_runs",
+    "series_items",
 }
 
 
