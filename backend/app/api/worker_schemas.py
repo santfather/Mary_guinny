@@ -52,6 +52,9 @@ class WorkerCompleteRequest(BaseModel):
     native_fps: float | None = Field(default=None, ge=0)
     duration_s: float | None = Field(default=None, ge=0)
     peak_mem_mb: int | None = Field(default=None, ge=0)
+    # Фактические параметры рендера (ширина/высота, aspect, cfg, snapshot
+    # workflow) — дописываются в `render_attempts.parameters`.
+    parameters: dict[str, Any] | None = None
 
 
 class WorkerCompleteOut(BaseModel):

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +44,22 @@ class ComfyUIClient:
             raise ValueError(f"ComfyUI не вернул prompt_id: {data}")
         return prompt_id
 
-    async def wait_for_prompt(self, prompt_id: str, poll_interval: float = 2.0) -> dict[str, Any]:
+    async def wait_for_prompt(
+        self,
+        prompt_id: str,
+        poll_interval: float = 2.0,
+        *,
+        timeout: float | None = None,
+        on_poll: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Ждёт запись в `/history`.
+
+        `on_poll` вызывается перед каждой паузой между опросами: воркер
+        использует его для heartbeat, иначе lease истечёт на долгом рендере.
+        `timeout` ограничивает общее ожидание.
+        """
+
+        deadline = time.monotonic() + timeout if timeout is not None else None
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             while True:
                 response = await client.get(f"{self.base_url}/history/{prompt_id}")
@@ -50,6 +67,10 @@ class ComfyUIClient:
                 history = response.json()
                 if prompt_id in history:
                     return history[prompt_id]
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(f"ComfyUI не завершил prompt {prompt_id} за {timeout}s")
+                if on_poll is not None:
+                    on_poll()
                 await asyncio.sleep(poll_interval)
 
     async def get_image(self, filename: str, subfolder: str = "", folder_type: str = "output") -> bytes:

@@ -33,7 +33,16 @@ from app.api.worker_schemas import (
     WorkerResumeOut,
     WorkerResumeRequest,
 )
-from app.models import Artifact, Event, Job, RenderAttempt, Scene, Shot, Worker
+from app.models import (
+    Artifact,
+    Event,
+    Job,
+    PromptRevision,
+    RenderAttempt,
+    Scene,
+    Shot,
+    Worker,
+)
 from app.storage import BlobStore
 from app.video_probe import VideoProbeError, probe_mp4
 
@@ -209,6 +218,23 @@ def _job_inputs(session: Session, job: Job) -> dict[str, object]:
     }
     if payload.get("prompt") is not None:
         inputs["prompt"] = payload["prompt"]
+    elif job.shot_id is not None:
+        # ARCHITECTURE §5.2: prompt входит в inputs. Shot-промпт хранится
+        # ревизиями, актуальна последняя revision с типом `motion`.
+        revision = session.scalar(
+            select(PromptRevision)
+            .where(
+                PromptRevision.shot_id == job.shot_id,
+                PromptRevision.prompt_type == "motion",
+            )
+            .order_by(PromptRevision.version.desc())
+            .limit(1)
+        )
+        if revision is not None:
+            inputs["prompt"] = revision.prompt
+            shot_key = (revision.parameters_json or {}).get("shot_key")
+            if isinstance(shot_key, str) and shot_key:
+                inputs["shot_key"] = shot_key
 
     artifact_id = payload.get("start_keyframe_artifact_id")
     if artifact_id is not None:
@@ -530,6 +556,8 @@ def complete(
         Decimal(str(payload.duration_s)) if payload.duration_s is not None else None
     )
     attempt.peak_mem_mb = payload.peak_mem_mb
+    if payload.parameters:
+        attempt.parameters = {**(attempt.parameters or {}), **payload.parameters}
 
     job.status = "completed"
     job.error_code = None

@@ -258,7 +258,12 @@ def test_claim_heartbeat_upload_and_complete(
 
     complete = api_client.post(
         f"/api/worker/jobs/{job_id}/complete",
-        json={"worker_name": "worker-a", "duration_s": 1.0, "native_fps": 24},
+        json={
+            "worker_name": "worker-a",
+            "duration_s": 1.0,
+            "native_fps": 24,
+            "parameters": {"width": 576, "height": 1024, "cfg_scale": 3.0},
+        },
         headers=_token(api_client),
     )
     assert complete.status_code == 200
@@ -277,12 +282,75 @@ def test_claim_heartbeat_upload_and_complete(
         "completed",
     ]
     attempt = conn.execute(
-        text("SELECT status, duration_s, native_fps FROM render_attempts WHERE job_id = :id"),
+        text(
+            "SELECT status, duration_s, native_fps, parameters"
+            " FROM render_attempts WHERE job_id = :id"
+        ),
         {"id": job_id},
     ).one()
     assert attempt.status == "completed"
     assert float(attempt.duration_s) == pytest.approx(1.0)
     assert float(attempt.native_fps) == pytest.approx(24.0)
+    # Фактические параметры рендера дописываются к параметрам claim.
+    assert attempt.parameters == {
+        "worker_name": "worker-a",
+        "job_attempt": 1,
+        "width": 576,
+        "height": 1024,
+        "cfg_scale": 3.0,
+    }
+
+
+def test_claim_inputs_carry_motion_prompt_and_shot_key(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """WP-N3: реальному воркеру нужен prompt из последней motion-ревизии (§5.2)."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    conn.execute(
+        text(
+            "INSERT INTO prompt_revisions"
+            " (shot_id, prompt_type, version, prompt, parameters_json)"
+            " VALUES (:shot_id, 'motion', 1, :prompt, CAST(:params AS jsonb))"
+        ),
+        {
+            "shot_id": shot_id,
+            "prompt": "older prompt",
+            "params": '{"shot_key": "NLB-OLD"}',
+        },
+    )
+    conn.execute(
+        text(
+            "INSERT INTO prompt_revisions"
+            " (shot_id, prompt_type, version, prompt, parameters_json)"
+            " VALUES (:shot_id, 'motion', 2, :prompt, CAST(:params AS jsonb))"
+        ),
+        {
+            "shot_id": shot_id,
+            "prompt": "the cat blinks slowly",
+            "params": '{"shot_key": "NLB-01"}',
+        },
+    )
+    _freeze_other_jobs(conn)
+    _queue(api_client, shot_id)
+
+    claimed = api_client.post(
+        "/api/worker/claim",
+        json={"worker_name": "worker-a", "lease_seconds": 30},
+        headers=_token(api_client),
+    )
+    assert claimed.status_code == 200
+    inputs = claimed.json()["inputs"]
+    assert inputs["prompt"] == "the cat blinks slowly"
+    assert inputs["shot_key"] == "NLB-01"
 
 
 def _queue_claim(api_client, worker_name: str):
