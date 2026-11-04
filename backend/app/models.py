@@ -60,7 +60,7 @@ ACTIVE_JOB_STATUSES = (
     "cancel_requested",
     "lease_expired",
 )
-ARTIFACT_SOURCES = ("attempt", "composition", "upload", "import")
+ARTIFACT_SOURCES = ("attempt", "composition", "upload", "import", "export")
 REFERENCE_ASSET_KINDS = (
     "character_reference",
     "location_reference",
@@ -97,6 +97,10 @@ SERIES_RUN_STATUSES = (
     "failed",
 )
 SERIES_ITEM_STATUSES = ("pending", "running", "completed", "failed", "skipped")
+# WP-M3: план производства — только черновики ревизий, approve в этот WP не входит.
+PRODUCTION_PLAN_STATUSES = ("draft", "superseded")
+# fallback — LLM недоступен или ответ не прошёл проверку, сохранён каркас сервера.
+PRODUCTION_PLAN_SOURCES = ("llm", "manual", "fallback")
 
 
 def _in_list(column: str, values: tuple[str, ...]) -> str:
@@ -139,6 +143,10 @@ class Project(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
     bible_version: Mapped[str | None] = mapped_column(Text)
+    # WP-M3: песня проекта (один трек на проект); таймлайн строится из него.
+    audio_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("artifacts.id", name="fk_projects_audio_artifact")
+    )
 
 
 class Episode(TimestampMixin, Base):
@@ -414,14 +422,14 @@ class Artifact(Base):
         CheckConstraint(
             "(attempt_id IS NOT NULL)::int"
             " + (shot_composition_id IS NOT NULL)::int"
-            " + (source IN ('upload', 'import'))::int = 1",
+            " + (source IN ('upload', 'import', 'export'))::int = 1",
             name="ck_artifacts_single_source",
         ),
         # S12, инвариант 2: source соответствует заполненной связи.
         CheckConstraint(
             "(source = 'attempt' AND attempt_id IS NOT NULL)"
             " OR (source = 'composition' AND shot_composition_id IS NOT NULL)"
-            " OR (source IN ('upload', 'import')"
+            " OR (source IN ('upload', 'import', 'export')"
             "     AND attempt_id IS NULL AND shot_composition_id IS NULL)",
             name="ck_artifacts_source_matches_link",
         ),
@@ -444,6 +452,11 @@ class Artifact(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mime_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # metadata — зарезервированное имя в SQLAlchemy Declarative, колонка остаётся "metadata".
+    # WP-M2: провенанс экспорта (проект, клипы, таймкоды, аудио) для source='export'.
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -846,3 +859,49 @@ class SeriesItem(Base):
     error_code: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProductionPlan(Base):
+    """Ревизия чернового производственного плана проекта (WP-M3).
+
+    План никогда не меняет существующие сцены/шоты: он только фиксирует ответ
+    LLM, таймлайн, по которому он построен, и предупреждения. Утверждение плана
+    и применение к сценам в WP-M3 не входят.
+    """
+
+    __tablename__ = "production_plans"
+    __table_args__ = (
+        UniqueConstraint("project_id", "revision", name="uq_production_plans_project_revision"),
+        CheckConstraint("revision >= 1", name="ck_production_plans_revision_positive"),
+        CheckConstraint(
+            "schema_version >= 1", name="ck_production_plans_schema_version_positive"
+        ),
+        CheckConstraint(
+            _in_list("status", PRODUCTION_PLAN_STATUSES), name="ck_production_plans_status"
+        ),
+        CheckConstraint(
+            _in_list("source", PRODUCTION_PLAN_SOURCES), name="ck_production_plans_source"
+        ),
+        Index("ix_production_plans_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="draft")
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="llm")
+    audio_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id", name="fk_production_plans_audio_artifact"),
+    )
+    timeline: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    plan: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    warnings: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

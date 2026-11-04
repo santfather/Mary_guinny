@@ -523,6 +523,9 @@ worker_report() {
     info '    backend/.venv/bin/python worker/ltx_worker.py --once --token "$MARY_WORKER_TOKEN"'
     info '    backend/.venv/bin/python worker/ltx_worker.py --series-run <run_id> --token "$MARY_WORKER_TOKEN"'
     info '    backend/.venv/bin/python worker/fake_worker.py --once --token "$MARY_WORKER_TOKEN"'
+    info "  Перед стартом воркер восстанавливает незавершённые рендеры по prompt_id"
+    info "  (WP-M4): state-файл ~/.mary-studio/ltx-worker-state.json, путь меняется"
+    info "  через --state-file или MARY_WORKER_STATE."
 }
 
 # --- Команды -----------------------------------------------------------------

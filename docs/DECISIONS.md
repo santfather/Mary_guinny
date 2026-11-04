@@ -449,6 +449,280 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
    отрендерены заново (по одной новой попытке на шот): h264 576×1024, 24 fps, 193 кадра,
    8.04 с, `aac` 48 kHz stereo. NLB-01…20 и NLB-28…30 не затрагивались.
 
+### 4.8. Сборка и экспорт вертикального MP4 (WP-M2)
+
+1. **Хранение результата.** Экспорт — обычный `Artifact` с `source='export'`
+   (S12 расширен: `attempt` XOR `composition` XOR `upload`/`import` XOR `export`),
+   `kind='export_video'`, `mime_type='video/mp4'`. Провенанс лежит в новой колонке
+   `artifacts.metadata` (JSONB, NOT NULL DEFAULT `'{}'`): `project_id`, `width`, `height`,
+   `fps`, `duration_s`, `audio_artifact_id`, `ffmpeg_version` и `clips[]`
+   (`shot_id`, `attempt_id`, `artifact_id`, `sha256`, `trim_start_s`, `trim_end_s`).
+   Миграция `0009_export_artifacts` (`ADD COLUMN` + пересоздание трёх CHECK); downgrade
+   удаляет `source='export'` и колонку. Отдельные таблицы экспортов не создаются.
+2. **API.** `POST /api/projects/{id}/exports` (синхронно, без jobs/worker) и
+   `GET /api/projects/{id}/exports` (свежие первыми). Клип задаётся парой
+   `shot_id` + `attempt_id`; допускаются только `completed` видео-попытки проекта с
+   MP4-артефактом. Необязательные `trim_start_s`/`trim_end_s` проверяются до ffmpeg
+   (422 `invalid_trim` / `trim_out_of_range`). До 30 клипов на экспорт.
+3. **Формат.** 1080×1920, 24 fps: `scale=1080:1920:force_original_aspect_ratio=decrease`
+   + `pad` (без растяжения, широкий кадр получает поля согласно §4.5 п.5), `concat`,
+   `libx264 -preset medium -crf 18 -pix_fmt yuv420p`, `aac 192k`, `+faststart`.
+   Апскейл 576×1024 → 1080×1920 выполняется здесь (§4.5 п.3).
+4. **Звук.** Без `audio_artifact_id` сохраняется звук клипов; клип без аудиодорожки
+   получает тишину (`anullsrc`), дорожки ресемплируются в 48 kHz stereo. Если
+   `audio_artifact_id` передан (артефакт `audio/*`), он заменяет звук целиком:
+   видео-часть собирается без аудио клипов, дорожка обрезается по длине видео
+   (`apad` + `-shortest`).
+5. **Исходники неприкосновенны.** Блобы клипов только читаются, сборка идёт во временный
+   каталог; `sha256` исходников до и после совпадают. Сбой ffmpeg — 500, исходные
+   попытки и MP4 не меняются.
+
+### 4.9. Ревью видео-попытки и мониторинг job (WP-M1)
+
+1. **Писатель `shots.approved_attempt_id`.** Единственный путь — идемпотентный
+   `POST /api/shots/{shot_id}/attempts/{attempt_id}/approve`: только `kind='video'`,
+   только `status='completed'`, только попытка своего шота; выставляет
+   `Shot.status='approved'`. Стартовый кадр (`start_keyframe_*`) не затрагивается (S9).
+2. **Отклонение.** `POST .../reject` ставит `Shot.status='changes_requested'` и не удаляет
+   артефакт. Если отклоняется ранее утверждённая попытка, `approved_attempt_id`
+   снимается — иначе в данных остался бы «утверждённый» отклонённый дубль. Это
+   осознанное уточнение формулировки roadmap («не меняется»); `enum Shot.status` не
+   расширялся.
+3. **Мониторинг.** `GET /api/jobs/{job_id}/events` — только чтение журнала `events`
+   (sequence, event, stage, progress, payload); `GET /api/jobs/{job_id}` дополнен
+   аддитивным `last_event`. В UI прогресс подписывается как «этап», а не как процент
+   модели; для завершённой job stage не показывается.
+4. Миграций нет: провенанс попытки (`workflow_version`, `model_hash`, `seed`,
+   `duration_s`, параметры рендера) уже существовал в `render_attempts`.
+
+### 4.10. Music timeline и производственный план (WP-M3)
+
+1. **Песня проекта.** Миграция `0010_audio_timeline_plans` добавляет
+   `projects.audio_artifact_id` (nullable, FK `artifacts.id`,
+   `fk_projects_audio_artifact`). Один трек на проект: `POST /api/projects/{id}/audio`
+   привязывает уже загруженный артефакт (404 — артефакта нет, 409 — не `audio/*`),
+   `GET /api/projects/{id}/audio` отдаёт длительность по ffprobe. Блобы не копируются,
+   артефакт остаётся `source='upload'`, `kind='project_audio'`.
+2. **Таймлайн — локальная эвристика.** `app/audio_timeline.py` декодирует трек через
+   FFmpeg в `s16le` 4 кГц моно, строит RMS-огибающую 100 Гц, автокорреляцией оценивает
+   BPM 60…200 и `bpm_confidence`, по фазе ставит биты, каждый 4-й — `downbeat`
+   (размер 4/4 предполагается), секции выделяются по энергии тактов (до 12,
+   `energy_tier` low/mid/high). Новых библиотек анализа (librosa и подобных) нет.
+   Неуверенность не блокирует: при `confidence < 0.35` — warning `low_bpm_confidence`,
+   без ритма — `bpm=null` и warning `beats_not_detected`.
+3. **Таблица `production_plans`.** `project_id`, `revision`, `schema_version`, `status`,
+   `source`, `audio_artifact_id`, `timeline`/`plan` JSONB NOT NULL, `warnings` JSONB
+   DEFAULT `'[]'`, UNIQUE `(project_id, revision)`, CHECK на `revision>=1`,
+   `schema_version>=1`, `status IN ('draft','superseded')`,
+   `source IN ('llm','manual','fallback')`, индекс `ix_production_plans_project_created`.
+   Downgrade удаляет таблицу и колонку.
+4. **Генерация.** `POST /api/projects/{id}/production-plans/generate` (`brief?` до 2000,
+   `use_llm`): сначала серверный каркас из секций таймлайна (сцена = секция, шоты
+   дробятся по долям), затем Ollama structured output (`format=json`, `temperature=0`)
+   в `app/production_plan.py`. Тайминги модели игнорируются — в плане всегда серверные
+   границы. Ответ проверяется Pydantic (`extra="forbid"`) и `validate_plan`; при провале
+   — не более `planner_max_repair` (2) переспросов с текстом ошибки, затем `fallback`
+   (каркас + `needs_review=true`). `source`: `llm` — принят план модели, `manual` —
+   `use_llm=false`, `fallback` — модель недоступна или ответ не принят. Коды
+   предупреждений: `plan_repair`, `plan_invalid`, `plan_model_unavailable`,
+   `plan_llm_disabled`, `plan_section_ignored`, `plan_scene_defaulted`.
+5. **Только черновики.** Ревизия = `max+1`; предыдущие `draft` при создании становятся
+   `superseded`. Утверждение плана, применение к `scenes`/`shots`/`prompt_revisions` и
+   запись в `events` в WP-M3 не входят: сцены, шоты и approved-записи не меняются.
+   Список — `GET /api/projects/{id}/production-plans` (ревизии по убыванию), деталь —
+   `GET /api/production-plans/{id}`.
+6. **UI.** `#/plan`: песня (загрузка и плеер), таймлайн (длительность, BPM с
+   уверенностью, размер, полоса секций), генерация с `brief`/`use_llm`, черновик плана и
+   список ревизий.
+7. **Живая проверка 2026-11-04** (проект NLB): синтетический клик-трек 24.03 с → BPM 60.0,
+   уверенность 0.91, 24 бита, одна секция `high`; `use_llm=false` → ревизия 1 `manual`;
+   `gemma3:4b` → ревизия 2 `llm` за ~21 с после двух `plan_repair` (первый ответ вернул
+   неверный корень JSON), ревизия 1 стала `superseded`. Трек с импульсами каждые 0.5 с
+   модель отсчитала как half-tempo (60 вместо 120): эвристика допускает полу- и двойной
+   темп, поэтому `bpm_confidence` — не гарантия темпа, границы проверяются человеком.
+
+### 4.11. Восстановление рендера после рестарта воркера (WP-M4)
+
+1. **Внешний id.** `POST /api/worker/jobs/{job_id}/external` (`worker_name`,
+   `external_id`) сохраняет `prompt_id` ComfyUI в существующую колонку
+   `jobs.external_id`; миграций нет. Нужен lease этого воркера и активный статус
+   (`leased`/`running`/`lease_expired`); повтор с тем же id идемпотентен, другой id —
+   409 `external_id_conflict`. Нового события нет: `EVENT_NAMES` и `ck_events_event`
+   не расширялись, факт виден в `jobs.external_id` и в ответе `resume`.
+2. **Очистка.** `complete` и `fail` сбрасывают `external_id` — id относится только к
+   текущему рендеру. `lease_expired` его не сбрасывает: именно он нужен для
+   восстановления.
+3. **State-файл воркера.** `~/.mary-studio/ltx-worker-state.json` (переопределяется
+   `--state-file` или `MARY_WORKER_STATE`): `job_id → {prompt_id, attempt_id,
+   native_fps, workflow_version, model_hash, seed, parameters}`. Запись атомарная
+   (`.tmp` + `os.replace`) сразу после `/prompt` и до ожидания; удаляется после
+   успешных `complete`/`fail`. Если `complete`/`fail` не дошли до сервера, запись
+   остаётся до следующего старта. State-файл — **best-effort**: недоступный каталог
+   или отказ `POST /external` дают предупреждение в stderr, но не прерывают уже
+   поставленный рендер (источник истины — `jobs.external_id` на сервере).
+4. **Восстановление при старте.** `POST /api/worker/resume` → job'ы с `external_id`
+   (или только с локальной записью) → `heartbeat` (возвращает job и после
+   `lease_expired`) → `GET /history/{prompt_id}`. Запись есть — MP4 скачивается,
+   проверяется ffprobe, загружается артефактом, job завершается `complete` без
+   повторного `/prompt`. Записи нет, но prompt в `/queue` — воркер ждёт завершения с
+   heartbeat'ами (ComfyUI продолжает рендер после падения воркера); `/queue`
+   перепроверяется на каждом опросе, поэтому prompt, исчезнувший из очереди во время
+   ожидания, тоже считается потерянным. Prompt'а нет ни в `/history`, ни в `/queue` —
+   `fail` с `error_code=external_prompt_lost`, `retryable=true`: job вернётся в
+   `retry_wait` и отрендерится заново штатно.
+5. **Провенанс восстановленной попытки.** `workflow_version`, `model_hash`, `seed`,
+   `native_fps` и `parameters` берутся из state-файла, добавляются `recovered=true` и
+   `prompt_id`. Если state-файла нет (удалён вручную), попытка завершается без этих
+   полей, но с `recovered=true`.
+6. **Устаревшие записи.** На старте записи о job'ах, которых нет в ответе `resume`,
+   удаляются: сервер уже не считает их задачами этого воркера.
+
+### 4.12. Список и сравнение попыток проекта (WP-M5)
+
+1. **Выборка.** `GET /api/projects/{project_id}/attempts` — аддитивный эндпоинт чтения,
+   миграций нет. Элемент списка — поля `AttemptOut` (включая то же подмножество
+   `render_parameters` без `workflow_snapshot`) плюс `shot_id`, `shot_sequence_no`,
+   `scene_id`, `scene_title`, `shot_status`, `approved`.
+2. **Фильтры.** `scene_id`, `shot_id`, `kind` (`keyframe`/`video`/`postprocess`),
+   `status`; по умолчанию фильтры пустые — видны все типы попыток. Неизвестный
+   `kind`/`status` — 422; `scene_id`/`shot_id` чужого проекта — 404, а не пустая
+   страница.
+3. **Пагинация.** Ответ — страница `items/total/limit/offset`: `limit` 1…100
+   (по умолчанию 50), `offset` ≥ 0, сортировка `created_at desc, id desc`; `total`
+   считается тем же набором условий без `limit`/`offset`.
+4. **«Сделать текущей» = approve.** UI не вводит нового писателя: кнопка вызывает
+   существующий `POST /api/shots/{shot_id}/attempts/{attempt_id}/approve` (WP-M1),
+   поэтому `approved_attempt_id` и `Shot.status='approved'` меняются по тем же правилам
+   (только `kind='video'`, только `status='completed'`, обязателен артефакт,
+   идемпотентно). Флаг `approved` в списке — вычисление из `shots.approved_attempt_id`,
+   а не новое поле БД.
+5. **Сравнение.** Side-by-side доступно только для двух завершённых видео-попыток
+   с артефактом; список при этом показывает и `keyframe`/`postprocess`.
+6. **Границы.** Эндпоинт только читает; артефакты, попытки, approved-записи и стартовые
+   кадры не меняются.
+
+### 4.13. Голос персонажа и многоракурсная карточка (WP-M6)
+
+1. **Хранение голоса.** Голосовой образец — строка `reference_assets` с `role='voice'`,
+   `kind='character_reference'`, `status='draft'`; миграции нет (`role` — существующий
+   свободный `Text`). Approve/reject и иммутабельность approved (S15) переиспользуются без
+   нового кода. Голос в рендере не участвует и стартовым кадром быть не может.
+2. **Эндпоинт.** `POST /api/characters/{character_id}/voice` — тело запроса: сырые байты
+   файла, тип из `Content-Type`: `audio/mpeg`/`audio/mp3` (mp3), `audio/wav`/`audio/x-wav`/
+   `audio/wave` (wav), `audio/mp4`/`audio/x-m4a` (m4a), `audio/aac`; иначе 422. Лимит размера
+   — `voice_upload_max_bytes` (16 МиБ). Дедупликация по `sha256` внутри проекта: повтор для
+   того же персонажа — 200 (идемпотентно), для другого владельца — 409 `duplicate_reference`.
+3. **Проверка файла.** ffprobe (`probe_audio`): аудиодорожка обязательна; длительность
+   ≤ `voice_max_duration_s` (30 с), иначе 422. `duration_s` (3 знака) пишется в
+   `metadata` референса и возвращается в `ReferenceOut.duration_s`.
+4. **Многоракурсная карточка.** Флаг `multi_view` живёт в `reference_assets.metadata` —
+   схема БД не меняется; выставляется через существующий `PATCH /api/reference-assets/{id}`
+   (только `draft`/`rejected`, S15 не ослаблен), читается в `ReferenceOut.multi_view`;
+   UI — чекбокс в лайтбоксе референса.
+5. **Запрет стартового кадра.** `keyframe` из референса отклоняет (409) два случая:
+   файл не изображение (`mime_type` не `image/*`, в том числе голос) и `multi_view=true`.
+   Слои композиции и пикер референсов на шоте отфильтровывают не-изображения.
+6. **UI.** На карточке персонажа — раздел «Голос»: загрузка файла, `<audio>`, длительность,
+   статус и approve/reject. Голосовые референсы не попадают в сетку изображений.
+   Синтез речи не выполняется.
+
+### 4.14. Пресеты рендера под оборудование (WP-M7)
+
+1. **Только измеренные пресеты.** В таблицу `backend/app/presets.py` попадают режимы,
+   подтверждённые реальными прогонами: `safe` (576×1024, 24 шота «NLB-single», в среднем
+   1062,5 с), `wide` (1024×576, 3 шота «NLB-single wide (28-30)») и `legacy_512`
+   (512×512/73/24, один прогон WP-00A). У каждого — флаг `measured` и `measured_runs`.
+   «Balanced»/«Quality» без замеров не создаются; обещания ускорения без benchmark
+   запрещены.
+2. **Детект железа.** Только stdlib и системные утилиты macOS: `platform.system()`/
+   `platform.machine()`, `sysctl -n hw.memsize|hw.model|machdep.cpu.brand_string`,
+   `vm_stat` (доступная память = free + inactive + speculative страницы). Новых
+   зависимостей нет (`psutil` не добавляется), CUDA/NVML не используются.
+3. **Рекомендация.** `recommend()` возвращает `safe` только для Apple Silicon с памятью
+   ≥ 16 ГиБ; иначе — `None` и причина (нет Apple Silicon / память не определена /
+   меньше 16 ГиБ). Не-Apple Silicon помечается `control_plane_only=true`.
+4. **Эндпоинт.** `GET /api/presets` — аддитивный read-only ответ: `hardware`, `presets`,
+   `recommended`, `reason`. Схема БД не меняется, миграций нет.
+5. **Приоритет в воркере.** `--aspect-ratio`/`--long-side`/`--cfg-scale` важнее API
+   (источник `cli`), затем рекомендация `GET /api/presets` (источник `api`), затем
+   встроенные умолчания (источник `default`). При недоступном API — предупреждение в
+   stderr и работа на встроенных значениях; `--no-preset` отключает запрос, `--preset`
+   выбирает именованный пресет из ответа API.
+6. **Провенанс.** Фактические `preset` и `preset_source` пишутся в существующие
+   `render_attempts.parameters` вместе с `aspect_ratio`/`long_side`/`cfg_scale`; схема
+   БД не меняется.
+
+### 4.15. Интерфейс lip sync без движка (WP-M8)
+
+1. **Только интерфейс.** Условия запуска реального движка не выполнены (MLX-совместимая
+   модель не выбрана, лицензии весов и голоса не проверены, согласия на голос нет,
+   память на 18 ГиБ не измерена), поэтому реализуется адаптер, а не движок. Веса, TTS,
+   внешние сервисы и новые зависимости не добавляются.
+2. **Адаптер.** `backend/app/lipsync.py`: `LipsyncEngine`, `SELECTED_ENGINE = None`,
+   `LipsyncUnavailable` с кодами `lipsync_engine_not_selected` /
+   `lipsync_engine_not_implemented`, точка входа `request_lip_sync()`. Legacy-заглушки
+   `pipeline/stages/lipsync.py` и `pipeline/stages/voices.py` (Hedra/ElevenLabs) не
+   затрагиваются — это отдельный старый episode-пайплайн.
+3. **Эндпоинт.** `POST /api/shots/{shot_id}/lipsync`: 404 для несуществующего шота,
+   409 с `detail='lipsync_engine_not_selected'` для валидного. В БД ничего не пишется,
+   job не создаётся, схема БД не меняется, миграций нет.
+4. **UI.** Панель «Озвучка / Lip sync» на карточке шота показывается только при
+   `VITE_FEATURE_LIPSYNC=true` (по умолчанию выключена): поля «реплика», «аудио»,
+   «персонаж», «голос» в disabled-состоянии с объяснением. Запрос к API из UI не
+   отправляется, пока движок не выбран.
+
+### 4.16. Thermal-safe планировщик рендера (WP-THERMAL-02)
+
+Основание: `docs/OPEN_QUESTIONS.md` Q-27…Q-35, аудит
+`docs/PROPOSALS/THERMAL_RENDER_AUDIT.md`, проект
+`docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md`. Схема БД, миграции, пресеты и
+production-параметры рендера не меняются.
+
+1. **Источник теплового состояния (Q-27).** Единственный источник — Swift-helper
+   `scripts/mac_thermal_state.swift` на `ProcessInfo.processInfo.thermalState`, сборка
+   `swiftc` в `~/.mary-studio/bin/mary-thermal-state` (бинарник вне Git). Значения
+   `nominal`/`fair`/`serious`/`critical`; ошибка запуска, таймаут или нераспознанный
+   вывод → `unknown`. `pmset -g therm` источником `nominal` не считается: живых
+   показаний он не отдаёт. Воркер опрашивает helper каждые `thermal_poll_seconds`
+   (по умолчанию 60 с) и обновляет снимок состояния; во время рендера — не реже
+   одного раза в `thermal_poll_seconds`.
+2. **Серверный guard (Q-28).** `POST /api/worker/claim` выдаёт `render_video` только
+   если нет другого `render_video` в статусе `leased`/`running`. Проверка — в той же
+   транзакции, что и `_CLAIM_SQL`, под `pg_advisory_xact_lock(hashtext(
+   'mary_studio:render_video_guard'))`; одного `NOT EXISTS` недостаточно: при
+   READ COMMITTED два параллельных claim видят пустое множество и оба получают lease.
+   `lease_expired` guard не блокирует: владелец lease утрачен, очередь восстанавливается
+   через `resume` (WP-M4), а не через запрет новых claim. `series_next` при активном
+   чужом рендере возвращает `{"status": "busy"}` и job не создаёт.
+3. **Read-only статус (Q-29).** `GET /api/render-agent/status` читает снимок
+   `~/.mary-studio/thermal-state.json`, хвост `thermal-events.jsonl` и очередь из БД.
+   Обязательные поля свежести: `updated_at`, `age_seconds`, `stale`
+   (`render_agent_stale_seconds`, по умолчанию 180 с). Нет файла → `worker_online=false`,
+   `thermal.state="unknown"`. Управления очередью и записи через эндпоинт нет.
+4. **Пороги (Q-30).** Eco: питание от сети, `kern.memorystatus_vm_pressure_level=1`,
+   свободная память ≥ 4 ГиБ. Работа от батареи допускается только с `--allow-battery`
+   и зарядом ≥ 50 %, иначе `battery_low`. Нехватка памяти или переход на батарею —
+   пауза воркера (без новых job), а не завершение процесса и не `fail` job; текущий
+   рендер досчитывается.
+5. **caffeinate (Q-31).** `caffeinate -i -w <pid воркера>` запускается на время шага
+   рендера и завершается в `finally`; `-w` гарантирует выход при падении воркера,
+   orphan-процессов не остаётся. Отключается `--no-caffeinate`. `launchd` — отдельный этап.
+6. **Профиль (Q-32).** `--thermal-profile off|balanced|eco` (env `MARY_THERMAL_PROFILE`),
+   по умолчанию `balanced`; значение читается только при старте воркера. Нового write
+   API и новых состояний в БД нет, динамическое переключение из UI — позже.
+7. **Границы Eco (Q-33).** Eco не меняет `long_side`, `num_frames`, `cfg_scale`, seed и
+   не включает `low_ram`; он управляет допуском, паузами и cooldown (480 с между
+   шотами, 1200 с после партии из 3). `low_ram` — только после энергетического теста Q-38.
+8. **Preview (Q-34).** Признак preview — `render_attempts.parameters.preview=true`,
+   `kind` остаётся `video`, миграции нет; preview не заменяет утверждённый production
+   render. В WP-THERMAL-02 preview-путь не реализуется (нет изменения параметров
+   рендера); решение зафиксировано для отдельного WP preview-first.
+9. **Журнал (Q-35).** `~/.mary-studio/thermal-events.jsonl`, фиксированный набор полей
+   (`ts`, `event`, `profile`, `worker`, `thermal`, `power`, `memory`, `reason`,
+   `job_id`), лимит размера `thermal_log_max_bytes` (5 МиБ) и `thermal_log_backups` (2)
+   с ротацией `*.1`, `*.2`. Имена событий таблицы `events` не расширяются
+   (`ck_events_event`), поэтому thermal-события живут только в JSONL.
+
 ---
 
 ## 5. Дополнительные утверждённые решения (D1–D8)
@@ -478,7 +752,20 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
 | `shot_compositions` | R: ревизии и слои вместо одной записи; A: `source_plan_id` nullable | Эндпоинт получает `revision`; старый одиночный доступ не сохраняется; композиции без плана валидны |
 | `shots` | A: `start_keyframe_*` | `approved_attempt_id` остаётся для видео-версии |
 | `visual_scene_plans` | A: новая таблица (S19) | План необязателен; существующие шоты и композиции не меняются |
+| `projects` | A: `audio_artifact_id` (FK, nullable) | Проекты без песни валидны; экспорт и рендер не меняются |
+| `production_plans` | A: новая таблица (WP-M3) | Только черновики; сцены, шоты и approved-записи не затрагиваются |
+| `jobs.external_id` | Использование существующей колонки (WP-M4) | Миграции нет; заполняется только на время рендера и очищается в `complete`/`fail` |
+| Worker API | A: `POST /api/worker/jobs/{id}/external` (WP-M4) | Существующие вызовы `claim`/`heartbeat`/`resume` не меняются |
 | API | A: новые эндпоинты; A5 переработан | Существующие эндпоинты v1.3 сохраняют семантику |
+| API | A: `GET /api/projects/{id}/attempts` (WP-M5) | Только чтение; схема БД и существующие ответы не меняются |
+| `reference_assets` | `role='voice'` и `metadata.multi_view` без миграции (WP-M6) | Существующие CHECK и S15 не меняются |
+| API | A: `POST /api/characters/{id}/voice`, `multi_view` в `PATCH /api/reference-assets/{id}` (WP-M6) | Только новый эндпоинт и поле разметки; ответы расширены `duration_s`/`multi_view` |
+| API | A: `GET /api/presets` (WP-M7) | Только чтение профиля железа и таблицы измеренных пресетов; схема БД не меняется |
+| `render_attempts.parameters` | Новые ключи `preset`/`preset_source` (WP-M7) | JSONB без миграции; старые попытки читаются как раньше |
+| API | A: `POST /api/shots/{id}/lipsync` (WP-M8) | Новый эндпоинт; всегда 409, пока движок не выбран; БД и очередь не затрагиваются |
+| Worker API | C: guard в `POST /api/worker/claim`, `series/next` → `busy` (WP-THERMAL-02) | Схема БД и миграции не меняются; claim `render_video` может вернуть `null` при чужом активном рендере |
+| API | A: read-only `GET /api/render-agent/status` (WP-THERMAL-02) | Только чтение снимка воркера, журнала и очереди; управления очередью нет |
+| Runtime | Локальные файлы воркера `~/.mary-studio/thermal-{state.json,events.jsonl}` (WP-THERMAL-02) | Вне БД и Git; формат фиксирован, журнал с ротацией; имена событий `events` не расширяются |
 
 **Правило:** baseline v1.3 не редактируется. Любое расхождение фиксируется здесь и в
 `docs/ROADMAP_MARY_STUDIO.md`.
@@ -495,6 +782,9 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
 | Remote и состав первого коммита | WP-00B |
 | Обязательность `scenes.episode_id` после backfill | WP-03 |
 | UI-стек | WP-04 (сначала API/OpenAPI) |
+| `launchd`-агент для воркера (Q-31) | отдельный этап после WP-THERMAL-02 |
+| Preview-first: `parameters.preview=true`, число кадров и согласие на снижение качества (Q-34) | отдельный WP preview-first |
+| `low_ram`, энергетические профили Performance и замеры (Q-33, Q-38) | после энергетического теста |
 
 ---
 
@@ -512,3 +802,12 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
 | 2026-10-28 | §4.5: разрешение рендера серии — 576×1024 (`--long-side 1024`) по результатам калибровки; 1080×1920 не поддержан two-stage half-res на 16 ГБ RAM; умолчания адаптера и воркера не менялись |
 | 2026-10-28 | §4.6: имя прогона серии (WP-08) — миграция `0008_series_run_title` (`series_runs.title`, nullable), поле `title` в create/list/detail, первый именованный прогон «NLB-single» |
 | 2026-10-29 | §4.7: сюжетные шоты NLB-21…27 — identity-референс `role='guinness_identity'` отдельно от стартового кадра, внешние сцен-кадры 9:16 через штатный путь `references → keyframe → promote-keyframe`, motion v2 с `source='human_prompt_override'`, провенанс `render_attempts.parameters` (+`workflow_snapshot`) без миграции; старая карточка `Guiness_clean` отвязана, но остаётся approved |
+| 2026-11-04 | §4.9: ревью видео-попытки и мониторинг job (WP-M1) — идемпотентный approve/reject как единственный писатель `approved_attempt_id`, `GET /api/jobs/{id}/events` и `last_event`, без миграций; reject утверждённой попытки снимает approve |
+| 2026-11-04 | §4.8: сборка и экспорт вертикального MP4 (WP-M2) — миграция `0009_export_artifacts` (`artifacts.metadata` JSONB, `source='export'`), синхронный `POST/GET /api/projects/{id}/exports`, 1080×1920/24 fps через ffmpeg, звук клипов или внешняя дорожка, исходники неизменны |
+| 2026-11-04 | §4.10: music timeline и производственный план (WP-M3) — миграция `0010_audio_timeline_plans` (`projects.audio_artifact_id`, таблица `production_plans`), FFmpeg-эвристика BPM/битов/секций без новых библиотек, `POST /api/projects/{id}/audio`, `GET …/timeline`, `POST …/production-plans/generate` (Ollama structured output + bounded repair), только черновые ревизии; UI `#/plan` |
+| 2026-11-04 | §4.11: восстановление рендера после рестарта воркера (WP-M4) — `POST /api/worker/jobs/{id}/external` пишет `prompt_id` в существующий `jobs.external_id`, state-файл `~/.mary-studio/ltx-worker-state.json`, `resume` + `/history`/`/queue` вместо повторного `/prompt`, `external_prompt_lost` (retryable) при потере prompt'а; миграций и нового события нет |
+| 2026-11-04 | §4.12: список и сравнение попыток проекта (WP-M5) — `GET /api/projects/{id}/attempts` с фильтрами `scene_id`/`shot_id`/`kind`/`status` и страницей `items/total/limit/offset`, флаг `approved` из `shots.approved_attempt_id`, UI `#/attempts`; «Сделать текущей» вызывает существующий approve; миграций нет |
+| 2026-11-04 | §4.13: голос персонажа и многоракурсная карточка (WP-M6) — `POST /api/characters/{id}/voice` пишет `reference_assets(role='voice')` (ffprobe, ≤ 30 с, дедуп по sha256), `multi_view` в `metadata` через существующий PATCH, `keyframe` отклоняет голос и многоракурсную карточку; UI-раздел «Голос»; миграций нет |
+| 2026-11-04 | §4.14: пресеты рендера под оборудование (WP-M7) — только измеренные `safe`/`wide`/`legacy_512` с флагами `measured`, детект Apple Silicon и памяти через `sysctl`/`vm_stat` без новых зависимостей, read-only `GET /api/presets`, приоритет «CLI > API > default» в воркере, `preset`/`preset_source` в `render_attempts.parameters`; миграций нет |
+| 2026-11-04 | §4.15: интерфейс lip sync без движка (WP-M8) — `backend/app/lipsync.py` (`SELECTED_ENGINE = None`, коды `lipsync_engine_not_selected`/`_not_implemented`), `POST /api/shots/{id}/lipsync` → 409 без записей в БД и без job, UI-панель за `VITE_FEATURE_LIPSYNC`; legacy-заглушки `pipeline/stages/*` не тронуты, миграций нет |
+| 2026-11-04 | §4.16: thermal-safe планировщик (WP-THERMAL-02) — Q-27 Swift-helper `ProcessInfo.thermalState` с fallback `unknown`; Q-28 атомарный guard одного `render_video` в `claim` (`pg_advisory_xact_lock` + `NOT EXISTS`), `series_next` → `busy`; Q-29 read-only `GET /api/render-agent/status` со свежестью данных; Q-30 сеть + normal memory pressure + 4 ГиБ, батарея только с ≥ 50 % и `--allow-battery`, пауза вместо завершения; Q-31 `caffeinate -i -w`, `launchd` отдельно; Q-32 профиль только при старте; Q-33 Eco не меняет production-параметры, `low_ram` — после Q-38; Q-34 preview через `parameters.preview=true` (реализация — отдельный WP); Q-35 JSONL с ротацией; миграций нет |

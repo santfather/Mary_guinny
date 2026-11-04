@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api/client";
-import type { SeriesRun } from "../api/types";
+import type { RenderAgentStatus, SeriesRun } from "../api/types";
 import { StateView } from "../components/StateView";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -161,6 +161,91 @@ export function SeriesRunPage({ runId }: { runId: string }) {
           </li>
         ))}
       </ul>
+
+      <RenderAgentPanel />
+    </section>
+  );
+}
+
+/** Read-only состояние thermal-контроля (WP-THERMAL-02, Q-29). */
+function RenderAgentPanel() {
+  const [status, setStatus] = useState<RenderAgentStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api.renderAgentStatus().then(
+        (data) => {
+          if (cancelled) return;
+          setStatus(data);
+          setError(null);
+        },
+        (failure: unknown) => {
+          if (cancelled) return;
+          setError(failure instanceof Error ? failure.message : String(failure));
+        },
+      );
+    };
+    load();
+    const timer = window.setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const lastEvent =
+    status !== null && status.last_events.length > 0
+      ? status.last_events[status.last_events.length - 1]
+      : null;
+
+  return (
+    <section className="panel">
+      <div className="panel__head">
+        <h2>Термозащита</h2>
+        <span className="muted">
+          {status === null
+            ? "нет данных"
+            : status.worker_online
+              ? "воркер на связи"
+              : "воркер не активен"}
+        </span>
+      </div>
+      {error !== null && <p className="alert">{error}</p>}
+      {status !== null && (
+        <>
+          <p className="muted">
+            Профиль: {status.profile ?? "—"} · thermal: {status.thermal.state} (
+            {status.thermal.source})
+            {status.stale && status.updated_at !== null && " · данные устарели"}
+          </p>
+          <p className="muted">
+            Питание: {status.power.source ?? "—"}
+            {status.power.battery_percent !== null &&
+              ` · заряд ${status.power.battery_percent}%`}{" "}
+            · память: {status.memory.pressure ?? "—"}
+            {status.memory.available_mb !== null &&
+              ` · свободно ${status.memory.available_mb} МБ`}
+          </p>
+          <p className="muted">
+            Партия: {status.batch.index ?? 0}/{status.batch.size ?? 0} · очередь:{" "}
+            {status.queue.active_render_jobs} активно, {status.queue.pending_render_jobs} ждёт
+          </p>
+          {status.pause.active && (
+            <p className="alert">
+              Пауза термозащиты: {status.pause.reason ?? "—"}
+              {status.cooldown.remaining_seconds !== null &&
+                ` · до следующего шота ${Math.ceil(status.cooldown.remaining_seconds / 60)} мин`}
+            </p>
+          )}
+          {lastEvent !== null && (
+            <p className="muted">
+              Последнее событие: {lastEvent.reason ?? lastEvent.event ?? "—"}
+            </p>
+          )}
+        </>
+      )}
     </section>
   );
 }

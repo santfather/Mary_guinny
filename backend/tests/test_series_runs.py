@@ -265,6 +265,38 @@ def test_next_moves_to_following_item_after_completion(
     assert detail["items"][0]["job_status"] == "completed"
 
 
+def test_next_waits_for_foreign_active_render(
+    api_client, conn: Connection, project_id, scene_id, make_shot
+) -> None:
+    """WP-THERMAL-02: серия не создаёт job, пока GPU занят чужим рендером."""
+
+    _make_shot(conn, make_shot, scene_id, sequence_no=1)
+    run = _create_run(api_client, project_id)
+    api_client.post(f"/api/series/{run['run_id']}/start")
+
+    foreign = uuid.uuid4()
+    conn.execute(
+        text(
+            "INSERT INTO jobs (id, kind, scene_id, status, lease_owner, lease_until)"
+            " VALUES (:id, 'render_video', :scene_id, 'leased', 'worker-z',"
+            " now() + interval '5 minutes')"
+        ),
+        {"id": foreign, "scene_id": scene_id},
+    )
+
+    busy = _next(api_client, run["run_id"])
+    assert busy["status"] == "busy"
+    assert busy["job_id"] == str(foreign)
+    assert _jobs_for_run(conn, run["run_id"]) == []
+
+    conn.execute(
+        text("UPDATE jobs SET status = 'completed' WHERE id = :id"), {"id": foreign}
+    )
+    queued = _next(api_client, run["run_id"])
+    assert queued["status"] == "queued"
+    assert queued["order"] == 1
+
+
 def test_stop_after_current_pauses_without_new_job(
     api_client, conn: Connection, project_id, scene_id, make_shot
 ) -> None:
@@ -365,7 +397,11 @@ def test_cancel_skips_pending_and_stops_worker(
     assert body["counts"]["skipped"] == 2
     assert {item["error_code"] for item in body["items"]} == {"cancelled"}
 
-    assert _next(api_client, run["run_id"]) == {"status": "cancelled", "job_id": None}
+    assert _next(api_client, run["run_id"]) == {
+        "status": "cancelled",
+        "job_id": None,
+        "run_id": run["run_id"],
+    }
     assert _jobs_for_run(conn, run["run_id"]) == []
 
 
@@ -386,7 +422,11 @@ def test_pause_resume_and_invalid_transitions(
 
     # Пауза останавливает выдачу новых job.
     assert api_client.post(f"/api/series/{run['run_id']}/pause").status_code == 200
-    assert _next(api_client, run["run_id"]) == {"status": "paused", "job_id": None}
+    assert _next(api_client, run["run_id"]) == {
+        "status": "paused",
+        "job_id": None,
+        "run_id": run["run_id"],
+    }
     assert _jobs_for_run(conn, run["run_id"]) == []
 
 

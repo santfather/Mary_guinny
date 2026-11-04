@@ -123,7 +123,16 @@ def update_reference_asset(
             status_code=409,
             detail=f"cannot relabel reference in status '{asset.status}'",
         )
-    for field in payload.model_fields_set:
+    fields = payload.model_fields_set
+    if "multi_view" in fields:
+        # WP-M6: пометка многоракурсной карточки живёт в metadata, роль не трогаем.
+        metadata = dict(asset.metadata_json or {})
+        if payload.multi_view:
+            metadata["multi_view"] = True
+        else:
+            metadata.pop("multi_view", None)
+        asset.metadata_json = metadata
+    for field in fields - {"multi_view"}:
         setattr(asset, field, getattr(payload, field))
     if asset.role == "primary":
         _clear_other_primary(session, asset)

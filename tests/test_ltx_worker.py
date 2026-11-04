@@ -35,6 +35,10 @@ class FakeComfy(ComfyUIClient):
         *,
         available: bool = True,
         history: dict | None = None,
+        history_entry: dict | None = None,
+        queued_prompt: bool = False,
+        pending_polls: int = 0,
+        drop_queue_after: int | None = None,
         video: bytes = b"fake-mp4",
         polls: int = 3,
     ) -> None:
@@ -53,11 +57,20 @@ class FakeComfy(ComfyUIClient):
                 }
             }
         )
+        self.history_entry = history_entry
+        self.queued_prompt = queued_prompt
+        # Сколько первых запросов `/history` отвечают «ещё не готово» и когда
+        # prompt перестаёт быть в `/queue` (WP-M4: рендер ещё идёт / потерян).
+        self.pending_polls = pending_polls
+        self.drop_queue_after = drop_queue_after
+        self.history_calls = 0
+        self.queue_checks = 0
         self.video = video
         self.polls = polls
         self.queued: dict | None = None
         self.uploaded: tuple[Path, str] | None = None
         self.viewed: tuple[str, str, str] | None = None
+        self.history_prompt: str | None = None
 
     async def is_available(self) -> bool:
         return self.available
@@ -69,6 +82,19 @@ class FakeComfy(ComfyUIClient):
     async def queue_prompt(self, workflow: dict, client_id: str | None = None) -> str:
         self.queued = workflow
         return "prompt-1"
+
+    async def get_history(self, prompt_id: str) -> dict | None:
+        self.history_prompt = prompt_id
+        self.history_calls += 1
+        if self.history_calls <= self.pending_polls:
+            return None
+        return self.history_entry
+
+    async def is_queued(self, prompt_id: str) -> bool:
+        self.queue_checks += 1
+        if self.drop_queue_after is not None and self.queue_checks > self.drop_queue_after:
+            return False
+        return self.queued_prompt
 
     async def wait_for_prompt(
         self, prompt_id: str, poll_interval: float = 2.0, *, timeout=None, on_poll=None
@@ -88,8 +114,10 @@ class FakeComfy(ComfyUIClient):
 class StubApi:
     """Подменяет WorkerClient: фиксирует вызовы."""
 
-    def __init__(self, start_image: bytes = START_BYTES) -> None:
+    def __init__(self, start_image: bytes = START_BYTES, *, complete_error=None) -> None:
         self.start_image = start_image
+        self.complete_error = complete_error
+        self.resume_jobs: list[dict] = []
         self.calls: list[tuple] = []
 
     def download(self, content_url: str, destination: Path) -> str:
@@ -100,12 +128,22 @@ class StubApi:
         self.calls.append(("heartbeat", stage, progress, lease_seconds))
         return {"status": "running"}
 
+    def link_external(self, job_id, worker_name, external_id):
+        self.calls.append(("external", job_id, worker_name, external_id))
+        return {"job_id": job_id, "status": "leased", "external_id": external_id}
+
+    def resume(self, worker_name):
+        self.calls.append(("resume", worker_name))
+        return {"worker_id": "worker-1", "jobs": list(self.resume_jobs)}
+
     def upload_artifact(self, job_id, worker_name, kind, source, mime_type):
         self.calls.append(("upload", kind, mime_type, source.read_bytes()))
         return {"id": "artifact-1"}
 
     def complete(self, job_id, worker_name, **kwargs):
         self.calls.append(("complete", kwargs))
+        if self.complete_error is not None:
+            raise self.complete_error
         return {"job_id": job_id, "status": "completed"}
 
     def fail(self, job_id, worker_name, error_code, *, retryable=False, message=None):
@@ -147,6 +185,15 @@ def _job(**overrides) -> "ltx_worker.ClaimedJob":
 @pytest.fixture(autouse=True)
 def fake_probe(monkeypatch) -> None:
     monkeypatch.setattr(ltx_worker, "probe_duration", lambda path: (8.04, True))
+
+
+@pytest.fixture(autouse=True)
+def fake_state(tmp_path, monkeypatch) -> Path:
+    """WP-M4: тесты не должны писать в настоящий `~/.mary-studio`."""
+
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(ltx_worker, "DEFAULT_STATE_FILE", path)
+    return path
 
 
 def test_process_one_renders_and_completes() -> None:
@@ -294,6 +341,173 @@ def test_default_workflow_is_the_api_template() -> None:
     assert ltx_worker.DEFAULT_WORKFLOW.name == "ltx23_mlx_q4_i2v.api.json"
 
 
+def test_process_one_links_prompt_id_and_clears_state(fake_state) -> None:
+    api = StubApi()
+
+    result = ltx_worker.process_one(api, _job(), "ltx-1", comfy=FakeComfy())
+
+    assert result["status"] == "completed"
+    assert [call for call in api.calls if call[0] == "external"] == [
+        ("external", "job-1", "ltx-1", "prompt-1")
+    ]
+    assert ltx_worker._load_state(fake_state) == {}
+
+
+def test_process_one_keeps_state_when_complete_fails(fake_state) -> None:
+    api = StubApi(complete_error=ltx_worker.WorkerError("server is down"))
+
+    with pytest.raises(ltx_worker.WorkerError):
+        ltx_worker.process_one(api, _job(), "ltx-1", comfy=FakeComfy())
+
+    state = ltx_worker._load_state(fake_state)
+    assert state["job-1"]["prompt_id"] == "prompt-1"
+    assert state["job-1"]["workflow_version"].startswith("ltx23-mlx-q4-i2v/")
+
+
+def test_recover_completes_render_without_new_prompt(fake_state) -> None:
+    api = StubApi()
+    api.resume_jobs = [
+        {"job_id": "job-1", "status": "lease_expired", "external_id": "prompt-9"}
+    ]
+    ltx_worker._remember_prompt(
+        fake_state,
+        "job-1",
+        {
+            "prompt_id": "prompt-9",
+            "native_fps": 24.0,
+            "workflow_version": "ltx23-mlx-q4-i2v/abc",
+            "model_hash": "dgrauet/ltx-2.3-mlx-q4",
+            "seed": 101,
+            "parameters": {"width": 576, "height": 1024},
+        },
+    )
+    comfy = FakeComfy(
+        history_entry={
+            "outputs": {
+                "3": {
+                    "images": [
+                        {"filename": "nlb_00001.mp4", "subfolder": "nlb", "type": "output"}
+                    ]
+                }
+            }
+        }
+    )
+
+    results = ltx_worker.recover(
+        api, "ltx-1", ltx_worker.RenderSettings(state_path=fake_state), comfy=comfy
+    )
+
+    assert results == [
+        {"job_id": "job-1", "status": "completed", "artifact_id": "artifact-1", "recovered": True}
+    ]
+    assert comfy.queued is None
+    assert comfy.history_prompt == "prompt-9"
+    assert comfy.viewed == ("nlb_00001.mp4", "nlb", "output")
+    assert [call[0] for call in api.calls] == ["resume", "heartbeat", "upload", "complete"]
+
+    complete = [call for call in api.calls if call[0] == "complete"][0][1]
+    assert complete["workflow_version"] == "ltx23-mlx-q4-i2v/abc"
+    assert complete["model_hash"] == "dgrauet/ltx-2.3-mlx-q4"
+    assert complete["seed"] == 101
+    assert complete["native_fps"] == 24.0
+    assert complete["parameters"]["width"] == 576
+    assert complete["parameters"]["recovered"] is True
+    assert complete["parameters"]["prompt_id"] == "prompt-9"
+    assert ltx_worker._load_state(fake_state) == {}
+
+
+def test_recover_fails_when_prompt_is_lost(fake_state) -> None:
+    api = StubApi()
+    api.resume_jobs = [
+        {"job_id": "job-1", "status": "lease_expired", "external_id": "prompt-9"}
+    ]
+
+    results = ltx_worker.recover(
+        api, "ltx-1", ltx_worker.RenderSettings(state_path=fake_state), comfy=FakeComfy()
+    )
+
+    assert results[0]["error_code"] == "external_prompt_lost"
+    fail_call = [call for call in api.calls if call[0] == "fail"][0]
+    assert fail_call[1] == "external_prompt_lost"
+    assert fail_call[2] is True
+    assert not [call for call in api.calls if call[0] == "upload"]
+
+
+def test_recover_waits_for_prompt_still_running(fake_state) -> None:
+    api = StubApi()
+    api.resume_jobs = [
+        {"job_id": "job-1", "status": "running", "external_id": "prompt-9"}
+    ]
+    finished = {
+        "outputs": {
+            "3": {
+                "images": [
+                    {"filename": "nlb_00001.mp4", "subfolder": "nlb", "type": "output"}
+                ]
+            }
+        }
+    }
+    comfy = FakeComfy(
+        history_entry=finished, queued_prompt=True, pending_polls=3, polls=3
+    )
+
+    results = ltx_worker.recover(
+        api,
+        "ltx-1",
+        ltx_worker.RenderSettings(state_path=fake_state, poll_interval=0.0),
+        comfy=comfy,
+    )
+
+    assert results[0]["recovered"] is True
+    assert comfy.queued is None
+    assert comfy.history_prompt == "prompt-9"
+    stages = [call[1] for call in api.calls if call[0] == "heartbeat"]
+    # Один heartbeat перед проверкой и по одному на каждый опрос `/history`.
+    assert stages == ["recover"] * (comfy.polls + 1)
+    assert [call[0] for call in api.calls][-2:] == ["upload", "complete"]
+
+
+def test_recover_fails_when_prompt_vanishes_from_queue(fake_state) -> None:
+    api = StubApi()
+    api.resume_jobs = [
+        {"job_id": "job-1", "status": "running", "external_id": "prompt-9"}
+    ]
+    comfy = FakeComfy(
+        history_entry=None,
+        queued_prompt=True,
+        pending_polls=10,
+        drop_queue_after=2,
+    )
+
+    results = ltx_worker.recover(
+        api,
+        "ltx-1",
+        ltx_worker.RenderSettings(state_path=fake_state, poll_interval=0.0),
+        comfy=comfy,
+    )
+
+    assert results[0]["error_code"] == "external_prompt_lost"
+    fail_call = [call for call in api.calls if call[0] == "fail"][0]
+    assert fail_call[1] == "external_prompt_lost"
+    assert fail_call[2] is True
+    assert not [call for call in api.calls if call[0] == "upload"]
+    assert ltx_worker._load_state(fake_state) == {}
+
+
+def test_recover_skips_jobs_without_prompt_and_drops_stale_state(fake_state) -> None:
+    api = StubApi()
+    api.resume_jobs = [{"job_id": "job-2", "status": "leased", "external_id": None}]
+    ltx_worker._remember_prompt(fake_state, "job-old", {"prompt_id": "prompt-1"})
+
+    results = ltx_worker.recover(
+        api, "ltx-1", ltx_worker.RenderSettings(state_path=fake_state), comfy=FakeComfy()
+    )
+
+    assert results == []
+    assert api.calls == [("resume", "ltx-1")]
+    assert ltx_worker._load_state(fake_state) == {}
+
+
 class SeriesApi:
     """Сервер серии: отдаёт заранее заданные ответы `series/next`."""
 
@@ -301,6 +515,8 @@ class SeriesApi:
         self.replies = list(replies)
         self.next_calls: list[str | None] = []
         self.claims = 0
+        self.pauses: list[str] = []
+        self.resumes: list[str] = []
 
     def series_next(self, worker_name: str, *, run_id=None) -> dict:
         self.next_calls.append(run_id)
@@ -310,6 +526,14 @@ class SeriesApi:
         self.claims += 1
         return _job()
 
+    def series_pause(self, run_id: str) -> dict:
+        self.pauses.append(run_id)
+        return {"status": "paused"}
+
+    def series_resume(self, run_id: str) -> dict:
+        self.resumes.append(run_id)
+        return {"status": "running"}
+
 
 def _series_args(**overrides):
     values = dict(name="ltx-1", lease=300, poll=0.0, once=False, series_run="run-1")
@@ -318,7 +542,7 @@ def _series_args(**overrides):
 
 
 def _stub_render(monkeypatch, processed: list[str]) -> None:
-    def _process(api, job, worker_name, settings=None, *, comfy=None):
+    def _process(api, job, worker_name, settings=None, *, comfy=None, gate=None):
         processed.append(job.job_id)
         return {"status": "completed"}
 
@@ -386,3 +610,252 @@ def test_series_loop_warns_when_claim_returns_other_job(monkeypatch, capsys) -> 
     assert code == 0
     assert processed == ["job-1"]
     assert "warning: claim вернул job-1" in capsys.readouterr().err
+
+
+class StubGate:
+    """Thermal-гейт с заданной последовательностью решений (WP-THERMAL-02)."""
+
+    def __init__(self, allowed: list[bool], *, stop: bool = False) -> None:
+        self.allowed = list(allowed)
+        self.stop = stop
+        self.pauses: list[str] = []
+        self.after: list[tuple[str | None, bool]] = []
+        self.profile = argparse.Namespace(name="balanced")
+
+    def before_next(self):
+        from thermal import Decision
+
+        allowed = self.allowed.pop(0) if len(self.allowed) > 1 else bool(self.allowed[0])
+        return Decision(allowed, None if allowed else "thermal_serious", 0.0)
+
+    def start_job(self, job_id) -> None:
+        pass
+
+    def touch(self, *, job_id=None) -> None:
+        pass
+
+    def sample(self, telemetry) -> None:
+        pass
+
+    def after_job(self, *, job_id=None, ok=True) -> None:
+        self.after.append((job_id, ok))
+
+    def job_telemetry(self) -> dict:
+        return {}
+
+    def waited_seconds(self) -> float:
+        return 0.0
+
+    def should_stop_waiting(self) -> bool:
+        return self.stop
+
+
+def test_series_loop_thermal_block_pauses_and_resumes_run(monkeypatch) -> None:
+    processed: list[str] = []
+    _stub_render(monkeypatch, processed)
+    monkeypatch.setattr(ltx_worker, "notify", lambda *a, **k: None)
+    api = SeriesApi(
+        [
+            {"status": "queued", "order": 1, "job_id": "job-1"},
+            {"status": "completed", "job_id": None, "counts": {}},
+        ]
+    )
+
+    code = ltx_worker._series_loop(
+        api, _series_args(), ltx_worker.RenderSettings(), StubGate([False, True])
+    )
+
+    assert code == 0
+    assert processed == ["job-1"]
+    assert api.pauses == ["run-1"]
+    assert api.resumes == ["run-1"]
+
+
+def test_series_loop_stops_waiting_after_thermal_timeout(monkeypatch) -> None:
+    processed: list[str] = []
+    _stub_render(monkeypatch, processed)
+    monkeypatch.setattr(ltx_worker, "notify", lambda *a, **k: None)
+    api = SeriesApi([])
+
+    code = ltx_worker._series_loop(
+        api, _series_args(), ltx_worker.RenderSettings(), StubGate([False], stop=True)
+    )
+
+    assert code == 1
+    assert api.pauses == ["run-1"]
+    assert api.claims == 0
+    assert processed == []
+
+
+def test_job_loop_does_not_claim_while_blocked(monkeypatch) -> None:
+    api = SeriesApi([])
+
+    code = ltx_worker._job_loop(
+        api, _series_args(once=True), ltx_worker.RenderSettings(), StubGate([False])
+    )
+
+    assert code == 0
+    assert api.claims == 0
+
+
+def test_build_thermal_gate_off_disables_control() -> None:
+    gate = ltx_worker._build_thermal_gate(_thermal_args(thermal_profile="off"))
+
+    assert gate.profile.name == "off"
+
+
+def test_build_thermal_gate_eco_uses_flags_and_warns(tmp_path, capsys) -> None:
+    state = tmp_path / "thermal.json"
+    args = _thermal_args(
+        thermal_profile="eco",
+        thermal_state_file=str(state),
+        thermal_log=str(tmp_path / "events.jsonl"),
+        thermal_helper=str(tmp_path / "missing-helper"),
+        allow_battery=True,
+        caffeinate=False,
+    )
+
+    gate = ltx_worker._build_thermal_gate(args)
+
+    assert gate.profile.name == "eco"
+    assert gate.allow_battery is True
+    assert gate.state_path == state
+    assert "thermal helper не найден" in capsys.readouterr().err
+
+
+def _thermal_args(**overrides) -> argparse.Namespace:
+    values = dict(
+        name="ltx-1",
+        thermal_profile="balanced",
+        thermal_state_file="/tmp/thermal-state.json",
+        thermal_log="/tmp/thermal-events.jsonl",
+        thermal_helper="/tmp/thermal-helper",
+        allow_battery=False,
+        caffeinate=True,
+        build_thermal_helper=False,
+        thermal_poll=60.0,
+        thermal_max_wait=21600.0,
+    )
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def _presets_payload() -> dict[str, object]:
+    return {
+        "recommended": "safe",
+        "reason": "рекомендован измеренный пресет safe (576×1024)",
+        "presets": [
+            {"name": "safe", "aspect_ratio": "9:16", "long_side": 1024, "cfg_scale": 3.0},
+            {"name": "wide", "aspect_ratio": "16:9", "long_side": 1024, "cfg_scale": 3.0},
+        ],
+    }
+
+
+def test_resolve_preset_uses_api_recommendation() -> None:
+    choice = ltx_worker.resolve_preset(
+        requested=None,
+        aspect_ratio=None,
+        long_side=None,
+        cfg_scale=None,
+        fetch=_presets_payload,
+    )
+
+    assert choice.preset == "safe"
+    assert choice.source == "api"
+    assert (choice.aspect_ratio, choice.long_side, choice.cfg_scale) == ("9:16", 1024, 3.0)
+    assert choice.warning is None
+
+
+def test_resolve_preset_explicit_flags_win_over_api() -> None:
+    def fail_fetch() -> dict[str, object]:
+        raise AssertionError("API не должен запрашиваться при явных флагах")
+
+    choice = ltx_worker.resolve_preset(
+        requested=None,
+        aspect_ratio="16:9",
+        long_side=1024,
+        cfg_scale=None,
+        fetch=fail_fetch,
+    )
+
+    assert choice.source == "cli"
+    assert choice.preset is None
+    assert choice.aspect_ratio == "16:9"
+    assert choice.long_side == 1024
+    assert choice.cfg_scale == ltx_worker.ltx_adapter.DEFAULT_CFG_SCALE
+
+
+def test_resolve_preset_takes_named_preset_from_api() -> None:
+    choice = ltx_worker.resolve_preset(
+        requested="wide",
+        aspect_ratio=None,
+        long_side=None,
+        cfg_scale=None,
+        fetch=_presets_payload,
+    )
+
+    assert choice.preset == "wide"
+    assert choice.source == "cli"
+    assert choice.aspect_ratio == "16:9"
+    assert choice.long_side == 1024
+
+
+def test_resolve_preset_falls_back_when_api_is_unavailable() -> None:
+    def boom() -> dict[str, object]:
+        raise ltx_worker.WorkerError("GET /api/presets failed: connection refused")
+
+    choice = ltx_worker.resolve_preset(
+        requested=None,
+        aspect_ratio=None,
+        long_side=None,
+        cfg_scale=None,
+        fetch=boom,
+    )
+
+    assert choice.preset is None
+    assert choice.source == "default"
+    assert choice.long_side == ltx_worker.ltx_adapter.DEFAULT_LONG_SIDE
+    assert choice.warning is not None and "пресет не получен" in choice.warning
+
+
+def test_resolve_preset_reports_missing_recommendation() -> None:
+    choice = ltx_worker.resolve_preset(
+        requested=None,
+        aspect_ratio=None,
+        long_side=None,
+        cfg_scale=None,
+        fetch=lambda: {"recommended": None, "reason": "нужен Apple Silicon", "presets": []},
+    )
+
+    assert choice.source == "default"
+    assert choice.preset is None
+    assert choice.warning is not None and "нужен Apple Silicon" in choice.warning
+
+
+def test_resolve_preset_reports_unknown_preset_name() -> None:
+    choice = ltx_worker.resolve_preset(
+        requested="quality",
+        aspect_ratio=None,
+        long_side=None,
+        cfg_scale=None,
+        fetch=_presets_payload,
+    )
+
+    assert choice.source == "default"
+    assert choice.preset is None
+    assert choice.warning is not None and "quality" in choice.warning
+
+
+def test_process_one_records_preset_provenance() -> None:
+    api = StubApi()
+    settings = ltx_worker.RenderSettings(preset="safe", preset_source="api")
+
+    result = ltx_worker.process_one(
+        api, _job(), "ltx-1", settings=settings, comfy=FakeComfy()
+    )
+
+    assert result["status"] == "completed"
+    complete = next(call[1] for call in api.calls if call[0] == "complete")
+    assert complete["parameters"]["preset"] == "safe"
+    assert complete["parameters"]["preset_source"] == "api"
+

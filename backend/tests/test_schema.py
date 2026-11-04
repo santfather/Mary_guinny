@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "events",
     "series_runs",
     "series_items",
+    "production_plans",
 }
 
 

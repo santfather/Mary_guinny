@@ -44,6 +44,19 @@ class WorkerHeartbeatOut(BaseModel):
     lease_until: datetime
 
 
+class WorkerExternalRequest(BaseModel):
+    """Внешний id рендера (ComfyUI prompt_id) для восстановления после рестарта."""
+
+    worker_name: str = Field(min_length=1, max_length=128)
+    external_id: str = Field(min_length=1, max_length=128)
+
+
+class WorkerExternalOut(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    external_id: str
+
+
 class WorkerCompleteRequest(BaseModel):
     worker_name: str = Field(min_length=1, max_length=128)
     workflow_version: str | None = Field(default=None, max_length=128)
@@ -111,3 +124,19 @@ class JobOut(BaseModel):
     run_after: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class JobEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sequence: int
+    event: str
+    stage: str | None
+    progress: float | None
+    attempt_id: uuid.UUID | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class JobDetailOut(JobOut):
+    last_event: JobEventOut | None = None

@@ -73,6 +73,29 @@ class ComfyUIClient:
                     on_poll()
                 await asyncio.sleep(poll_interval)
 
+    async def get_history(self, prompt_id: str) -> dict[str, Any] | None:
+        """Запись `/history/{prompt_id}` или `None`, если ComfyUI её не знает."""
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{self.base_url}/history/{prompt_id}")
+            response.raise_for_status()
+            data = response.json()
+        entry = data.get(prompt_id)
+        return entry if isinstance(entry, dict) else None
+
+    async def is_queued(self, prompt_id: str) -> bool:
+        """Есть ли prompt в `/queue`: `True`, пока ComfyUI его ещё выполняет."""
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{self.base_url}/queue")
+            response.raise_for_status()
+            data = response.json()
+        for key in ("queue_running", "queue_pending"):
+            for item in data.get(key) or []:
+                if isinstance(item, list) and len(item) > 1 and item[1] == prompt_id:
+                    return True
+        return False
+
     async def get_image(self, filename: str, subfolder: str = "", folder_type: str = "output") -> bytes:
         params = {
             "filename": filename,

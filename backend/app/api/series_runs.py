@@ -20,7 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_session, require_project
-from app.api.worker import require_worker_token
+from app.api.worker import (
+    ACTIVE_LEASE_STATUSES,
+    acquire_render_guard,
+    require_worker_token,
+)
 from app.models import (
     ACTIVE_JOB_STATUSES,
     Event,
@@ -394,7 +398,7 @@ def series_next(
     # `stopping` — это ещё активный прогон: текущий шот досчитывается,
     # после его завершения прогон уйдёт в `paused`.
     if run.status not in ("running", "stopping"):
-        return {"status": run.status, "job_id": None}
+        return {"status": run.status, "job_id": None, "run_id": str(run.id)}
 
     active = _running_item(session, run)
     if active is not None:
@@ -419,6 +423,7 @@ def series_next(
                     "reason": active.error_code,
                     "order": active.order,
                     "job_id": None,
+                    "run_id": str(run.id),
                 }
         else:
             session.commit()
@@ -427,12 +432,18 @@ def series_next(
                 "order": active.order,
                 "job_id": str(job.id),
                 "job_status": job.status,
+                "run_id": str(run.id),
             }
 
     if run.status == "stopping":
         run.status = "paused"
         session.commit()
-        return {"status": "paused", "reason": "stop_after_current", "job_id": None}
+        return {
+            "status": "paused",
+            "reason": "stop_after_current",
+            "job_id": None,
+            "run_id": str(run.id),
+        }
 
     item = session.scalar(
         select(SeriesItem)
@@ -451,7 +462,12 @@ def series_next(
             f"completed {counts['completed']}, failed {counts['failed']},"
             f" skipped {counts['skipped']}",
         )
-        return {"status": "completed", "job_id": None, "counts": counts}
+        return {
+            "status": "completed",
+            "job_id": None,
+            "counts": counts,
+            "run_id": str(run.id),
+        }
 
     shot = session.get(Shot, item.shot_id)
     reason = blocked_reason(session, shot) if shot is not None else "missing_shot"
@@ -464,6 +480,7 @@ def series_next(
             "order": item.order,
             "job_id": None,
             "reason": reason,
+            "run_id": str(run.id),
         }
 
     active_job = session.scalar(
@@ -480,11 +497,34 @@ def series_next(
             "order": item.order,
             "job_id": str(active_job.id),
             "job_status": active_job.status,
+            "run_id": str(run.id),
         }
 
     key = f"series:{run.id}:{item.order}"
     job = session.scalar(select(Job).where(Job.idempotency_key == key))
     if job is None:
+        # WP-THERMAL-02: одна тяжёлая job за раз. Чужой активный рендер (ручной
+        # шот или другая серия) — повод не создавать job, а сообщить `busy`;
+        # advisory-блокировка закрывает гонку с параллельным `claim`.
+        acquire_render_guard(session)
+        other_active = session.scalar(
+            select(Job)
+            .where(
+                Job.kind == "render_video",
+                Job.status.in_(ACTIVE_LEASE_STATUSES),
+            )
+            .order_by(Job.created_at)
+            .limit(1)
+        )
+        if other_active is not None:
+            session.commit()
+            return {
+                "status": "busy",
+                "order": item.order,
+                "job_id": str(other_active.id),
+                "job_status": other_active.status,
+                "run_id": str(run.id),
+            }
         job = Job(
             kind="render_video",
             shot_id=shot.id,
@@ -513,4 +553,5 @@ def series_next(
         "order": item.order,
         "job_id": str(job.id),
         "shot_id": str(shot.id),
+        "run_id": str(run.id),
     }

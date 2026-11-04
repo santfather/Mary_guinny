@@ -19,6 +19,8 @@ class ReferenceMetaUpdate(BaseModel):
     pose: ReferencePose | None = None
     expression: str | None = Field(default=None, max_length=200)
     role: str | None = Field(default=None, max_length=64)
+    # WP-M6: многоракурсная карточка не может быть стартовым кадром (живёт в metadata).
+    multi_view: bool | None = None
 
 
 
@@ -80,13 +82,18 @@ class ReferenceOut(BaseModel):
     mime_type: str | None
     sha256: str
     has_alpha: bool | None
+    # WP-M6: длительность голосового образца и пометка многоракурсной карточки.
+    duration_s: float | None
+    multi_view: bool
     approved_at: datetime | None
     created_at: datetime
     content_url: str
 
     @classmethod
     def from_asset(cls, asset: ReferenceAsset) -> "ReferenceOut":
-        raw_alpha = (asset.metadata_json or {}).get("has_alpha")
+        metadata = asset.metadata_json or {}
+        raw_alpha = metadata.get("has_alpha")
+        raw_duration = metadata.get("duration_s")
         return cls(
             id=asset.id,
             kind=asset.kind,
@@ -103,6 +110,12 @@ class ReferenceOut(BaseModel):
             mime_type=asset.mime_type,
             sha256=asset.sha256,
             has_alpha=raw_alpha if isinstance(raw_alpha, bool) else None,
+            duration_s=(
+                float(raw_duration)
+                if isinstance(raw_duration, (int, float)) and not isinstance(raw_duration, bool)
+                else None
+            ),
+            multi_view=metadata.get("multi_view") is True,
             approved_at=asset.approved_at,
             created_at=asset.created_at,
             content_url=f"/api/reference-assets/{asset.id}/content",

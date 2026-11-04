@@ -97,7 +97,7 @@
 
 ---
 
-## 8. Текущее состояние (на 2026-10-29)
+## 8. Текущее состояние (на 2026-11-04)
 
 - WP-00 выполнен: `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/ENV-AUDIT.md`, `AGENTS.md`.
 - WP-00B выполнен: git инициализирован, ветка `main`, remote `git@github.com:santfather/Mary_guinny.git`.
@@ -199,6 +199,111 @@
   только `layout mockup`, SDXL/IPAdapter в ComfyUI отсутствуют — сцен-кадры производятся
   вне системы; входные кадры 392–396 px шириной модель апскейлит (1.56–1.66×) с обрезкой
   3–6% по бокам.
-- Тесты: legacy — 15 passed; backend — 182 passed; `tests/test_ltx_worker.py` — 16 passed;
-  `tests/test_ltx_adapter.py` — 12 passed; корневой `python -m pytest tests` — 43 passed;
-  `alembic check` — no new operations (после `0008_series_run_title`); UI — `npm run build`.
+- WP-M0 выполнен (2026-11-04): аудит open-source проекта Maestro по commit
+  `05f5677f…` (`VERSION=3.2.5`), лицензионный обзор и roadmap интеграции —
+  `docs/PROPOSALS/MAESTRO_CAPABILITY_AUDIT.md`, `MAESTRO_LICENSE_REVIEW.md`,
+  `MAESTRO_INTEGRATION_ROADMAP.md`. Код Maestro не переносится (только clean-room идеи),
+  Mary Studio не менялся.
+- WP-M1 выполнен: ревью видео-попытки (`POST /api/shots/{id}/attempts/{attempt_id}/
+  approve|reject`, идемпотентный писатель `shots.approved_attempt_id`, без миграций),
+  `GET /api/jobs/{id}/events` и `last_event` в детали job, UI — плеер попытки, кнопки
+  «Утвердить»/«Отклонить», бейдж утверждённого дубля, панель прогресса `JobProgress`
+  (polling 3 с, «этап», elapsed) и метаданные попытки. Отклонение от roadmap: `reject`
+  утверждённой попытки снимает `approved_attempt_id` (решение в отчёте WP-M1, §4.2
+  baseline не нарушен).
+- WP-M2 выполнен: миграция `0009_export_artifacts` (`artifacts.metadata` JSONB,
+  `source='export'`, пересоздание CHECK S12), `app/assembly.py` (ffmpeg: trim → scale/pad
+  1080×1920 → 24 fps → concat → h264/aac + `+faststart`; звук клипов или внешняя дорожка),
+  `app/api/exports.py` (`POST/GET /api/projects/{id}/exports`, провенанс в metadata),
+  UI `#/exports` (`ExportPage`, загрузка музыки); решение — `docs/DECISIONS.md` §4.8.
+  Живая сборка NLB-21…23: 1080×1920 / 24 fps / 24.126 с / h264 + aac, sha256 исходников
+  до и после совпадают.
+- WP-M3 выполнен: миграция `0010_audio_timeline_plans` (`projects.audio_artifact_id`,
+  таблица `production_plans` со статусами `draft`/`superseded`), `app/audio_timeline.py`
+  (FFmpeg → RMS-огибающая 100 Гц → BPM/биты/downbeats/секции, чистый Python, без
+  `librosa`), `app/production_plan.py` (каркас из секций + Ollama `gemma3:4b`
+  structured output, Pydantic `extra="forbid"`, bounded repair ≤ 2, `fallback`),
+  `app/api/production_plans.py` (`POST/GET /api/projects/{id}/audio`, `GET …/timeline`,
+  `POST …/production-plans/generate`, list/detail), UI `#/plan` (песня, таймлайн,
+  ревизии). Только черновые ревизии: сцены, шоты и approved-записи не меняются.
+  Решение — `docs/DECISIONS.md` §4.10. Живая проверка NLB: трек 24.03 с → BPM 60.0
+  (уверенность 0.91), ревизия 1 `manual`, ревизия 2 `llm` после двух `plan_repair`.
+- WP-M4 выполнен: `POST /api/worker/jobs/{id}/external` пишет `prompt_id` в существующий
+  `jobs.external_id` (миграций и нового события нет; `complete`/`fail` его сбрасывают),
+  `GET /api/worker/resume` отдаёт `external_id`; `worker/client.py` — `link_external`,
+  `ComfyUIClient.get_history`/`is_queued`; `worker/ltx_worker.py` — state-файл
+  `~/.mary-studio/ltx-worker-state.json` (`--state-file`/`MARY_WORKER_STATE`, атомарная
+  запись, best-effort), `recovered` через `resume` + `/history` с перепроверкой `/queue`,
+  `external_prompt_lost` (retryable) при потере prompt'а. Решение — `docs/DECISIONS.md`
+  §4.11. Живая проверка NLB-24 (576×1024): prompt `0f175737…` поставлен, воркер убит
+  `kill -9`, recovery завершил job без повторного `/prompt` (в `/history` ровно одна
+  запись), артефакт `7b71349b…` — h264 576×1024 / 193 кадра / 24 fps / 8.042 с + `aac`,
+  `render_attempts.parameters` содержат `recovered=true` и `prompt_id`; на потерянном
+  prompt'е (`6059528a…`, очистка очереди) получен `external_prompt_lost`.
+- WP-M5 выполнен: `GET /api/projects/{id}/attempts` — аддитивная выборка чтения
+  (фильтры `scene_id`/`shot_id`/`kind`/`status`, страница `items/total/limit/offset`,
+  `limit` 1…100 по умолчанию 50, сортировка `created_at desc, id desc`), элемент —
+  поля `AttemptOut` + `shot_id`/`shot_sequence_no`/`scene_id`/`scene_title`/`shot_status`/
+  `approved`; флаг `approved` вычисляется из `shots.approved_attempt_id`. UI `#/attempts`:
+  фильтры, пагинация, side-by-side двух завершённых видео-попыток, «Сделать текущей»
+  вызывает существующий `approve` (новый писатель не вводился), ссылки на шот и артефакт;
+  `attemptMeta` вынесен в `ui/src/attemptMeta.ts`. Решение — `docs/DECISIONS.md` §4.12.
+  Схема БД не менялась, миграций нет. Живая выборка «The Nine Lives Band»: 82 попытки
+  (39 завершённых видео); `approved`-попыток в данных пока 0 — флаг выставит человек
+  кнопкой «Сделать текущей».
+- WP-M6 выполнен: голос персонажа и многоракурсная карточка (Phase C, без синтеза речи).
+  `POST /api/characters/{id}/voice` (сырое тело, `audio/mpeg|wav|mp4|aac`, ≤ 16 МиБ) пишет
+  `reference_assets(role='voice')` — ffprobe проверяет аудиодорожку и длительность
+  ≤ 30 с (`duration_s` в `metadata`), дедуп по sha256 в проекте (200 для того же
+  персонажа, 409 `duplicate_reference` для другого). `multi_view` хранится в
+  `reference_assets.metadata` и выставляется существующим `PATCH /api/reference-assets/{id}`
+  (draft/rejected, S15 не ослаблен); `ReferenceOut` расширен `duration_s`/`multi_view`.
+  `keyframe` из референса отклоняет (409) не-изображения и `multi_view=true`; слои
+  композиции и пикер на шоте показывают только изображения. UI — раздел «Голос» на
+  карточке персонажа (загрузка, `<audio>`, длительность, approve/reject) и чекбокс
+  многоракурсной карточки в лайтбоксе. Решение — `docs/DECISIONS.md` §4.13.
+  Схема БД не менялась, миграций нет; новый `tests/test_character_voice.py` — 7 тестов.
+- WP-M7 выполнен: пресеты рендера под оборудование (Phase G). `backend/app/presets.py` —
+  таблица **только измеренных** режимов: `safe` (576×1024, 24 шота «NLB-single»,
+  1062,5 с/шот), `wide` (1024×576, 3 шота), `legacy_512` (512×512/73/24, WP-00A) с флагами
+  `measured`/`measured_runs`; детект железа — stdlib + `sysctl`/`vm_stat` без новых
+  зависимостей (доступная память = free + inactive + speculative), CUDA/NVML не
+  используются. `GET /api/presets` (read-only) отдаёт `hardware`/`presets`/`recommended`/
+  `reason`; `recommend()` — `safe` только для Apple Silicon ≥ 16 ГиБ, иначе `None` с
+  причиной. Воркер (`resolve_preset`) соблюдает приоритет «CLI > API > default»,
+  `--preset`/`--no-preset`, при недоступном API — предупреждение и встроенные значения;
+  `preset`/`preset_source` пишутся в `render_attempts.parameters`. Решение —
+  `docs/DECISIONS.md` §4.14. Схема БД не менялась, миграций нет;
+  новый `tests/test_presets.py` — 11 тестов, в `tests/test_ltx_worker.py` +7.
+- WP-M8 выполнен (только интерфейс): `backend/app/lipsync.py` — адаптер без движка
+  (`SELECTED_ENGINE = None`, `LipsyncUnavailable` с кодами `lipsync_engine_not_selected`/
+  `lipsync_engine_not_implemented`, `request_lip_sync()`); `POST /api/shots/{id}/lipsync`
+  отдаёт 404 для неизвестного шота и 409 `lipsync_engine_not_selected` для валидного,
+  ничего не пишет в БД и не создаёт job. UI-панель «Озвучка / Lip sync» (disabled-поля)
+  только при `VITE_FEATURE_LIPSYNC=true`. Legacy-заглушки `pipeline/stages/lipsync.py` и
+  `voices.py` не тронуты; веса, TTS и внешние сервисы не подключались. Решение —
+  `docs/DECISIONS.md` §4.15. Миграций и новых зависимостей нет; новый
+  `tests/test_lipsync.py` — 4 теста.
+- WP-THERMAL-02 выполнен: thermal-safe планировщик без новых миграций и моделей.
+  `backend/app/api/worker.py` — атомарный guard `render_video` в `claim` под
+  `pg_advisory_xact_lock(hashtext('mary_studio:render_video_guard'))` + `NOT EXISTS`
+  в одном операторе; `series_next` при чужом активном рендере отдаёт `busy` и
+  `run_id`. `worker/thermal.py` — пробы (Swift-helper `ProcessInfo.thermalState`,
+  `pmset -g ps`, `sysctl`/`vm_stat`), профили `off|balanced|eco` (Eco: сеть, normal
+  pressure, ≥ 4 ГиБ), гистерезис после `serious`/`critical`, cooldown 480/1200 с,
+  консервативный режим при `unknown` (900 с, партия ≤ 2), JSONL-журнал с ротацией,
+  `KeepAwake` (`caffeinate -i -w <pid>`), состояние в `~/.mary-studio/thermal-state.json`.
+  `worker/ltx_worker.py` — `--thermal-profile/--no-caffeinate/--allow-battery/
+  --thermal-state-file/--thermal-log/--thermal-helper/--build-thermal-helper/--thermal-poll/
+  --thermal-max-wait`, допуск до `claim`, Thermal Pause через существующие
+  `pause`/`resume` (снимает только свою паузу), телеметрия в
+  `render_attempts.parameters.thermal` + `peak_mem_mb`, `caffeinate` в `finally`.
+  `GET /api/render-agent/status` (read-only: снимок воркера + хвост журнала + очередь
+  из БД, `render_agent_stale_seconds`=180) и панель «Термозащита» на `#/series/{id}`.
+  Решение — `docs/DECISIONS.md` §4.16. Схема БД не менялась; новые
+  `tests/test_thermal_gate.py` — 33 теста, `backend/tests/test_render_agent_status.py` —
+  5 тестов, в `tests/test_ltx_worker.py` +5.
+- Тесты: legacy — 15 passed; backend — 239 passed; `tests/test_ltx_worker.py` — 35 passed;
+  `tests/test_thermal_gate.py` — 33 passed; `tests/test_ltx_adapter.py` — 12 passed;
+  корневой `python -m pytest tests` — 95 passed;
+  `alembic check` — no new operations (после `0010_audio_timeline_plans`); UI — `npm run build`.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "../api/client";
 import type {
@@ -14,7 +14,11 @@ import { StateView } from "../components/StateView";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsync } from "../hooks/useAsync";
 import { useReferenceReview } from "../hooks/useReferenceReview";
-import { kindLabel } from "../labels";
+import {
+  canApproveReference,
+  canRejectReference,
+  kindLabel,
+} from "../labels";
 
 const SOURCE_LABELS: Record<string, string> = {
   manual: "вручную",
@@ -27,6 +31,11 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
   const [filters, setFilters] = useState<ReferenceFilters>({ status: "", view: "", pose: "" });
   const [snapshot, setSnapshot] = useState<LibraryData | null>(null);
   const [preview, setPreview] = useState<ReferenceAsset | null>(null);
+  const [voiceFile, setVoiceFile] = useState<File | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
+  const voiceInput = useRef<HTMLInputElement>(null);
   const { pendingId, actionError, review } = useReferenceReview();
 
   const library = useAsync(
@@ -55,6 +64,31 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
     library.reload();
   }
 
+  async function handleMultiView(asset: ReferenceAsset, value: boolean): Promise<void> {
+    const updated = await api.relabel(asset.id, { multi_view: value });
+    setPreview((current) => (current !== null && current.id === updated.id ? updated : current));
+    references.reload();
+  }
+
+  async function handleVoiceUpload(): Promise<void> {
+    if (voiceFile === null) return;
+    setVoiceBusy(true);
+    setVoiceError(null);
+    setVoiceNotice(null);
+    try {
+      await api.uploadVoice(characterId, voiceFile);
+      setVoiceFile(null);
+      if (voiceInput.current !== null) voiceInput.current.value = "";
+      setVoiceNotice("Голосовой образец загружен");
+      references.reload();
+      library.reload();
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVoiceBusy(false);
+    }
+  }
+
   if (snapshot === null) {
     if (library.state.status === "error") {
       return (
@@ -71,6 +105,9 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
 
   const [character, bible] = snapshot;
   const latestBible = bible[0] ?? null;
+  const allReferences = references.state.status === "ready" ? references.state.data : [];
+  const voiceReferences = allReferences.filter((asset) => asset.role === "voice");
+  const imageReferences = allReferences.filter((asset) => asset.role !== "voice");
 
   return (
     <section className="page">
@@ -134,7 +171,7 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
           <h2>Референсы</h2>
           <span className="muted">
             {references.state.status === "ready"
-              ? `${references.state.data.length} из ${character.reference_count}`
+              ? `${imageReferences.length} из ${character.reference_count}`
               : "…"}
           </span>
         </div>
@@ -161,7 +198,7 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
         )}
 
         {references.state.status === "ready" &&
-          (references.state.data.length === 0 ? (
+          (imageReferences.length === 0 ? (
             <StateView
               kind="empty"
               title="Референсов нет"
@@ -169,7 +206,7 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
             />
           ) : (
             <div className="grid">
-              {references.state.data.map((asset) => (
+              {imageReferences.map((asset) => (
                 <ReferenceCard
                   key={asset.id}
                   asset={asset}
@@ -183,6 +220,93 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
           ))}
       </section>
 
+      <section className="panel">
+        <div className="panel__head">
+          <h2>Голос</h2>
+          <span className="muted">
+            {voiceReferences.length === 0 ? "нет образца" : `${voiceReferences.length} шт.`}
+          </span>
+        </div>
+        <p className="muted">
+          Образец тембра до 30 секунд (mp3, wav, m4a, aac). Синтез речи не выполняется:
+          файл хранится как референс и в рендере не участвует.
+        </p>
+
+        <div className="voice__upload">
+          <input
+            ref={voiceInput}
+            type="file"
+            accept="audio/*"
+            disabled={voiceBusy}
+            onChange={(event) => {
+              setVoiceFile(event.currentTarget.files?.[0] ?? null);
+              setVoiceError(null);
+              setVoiceNotice(null);
+            }}
+          />
+          <button
+            type="button"
+            className="button"
+            disabled={voiceBusy || voiceFile === null}
+            onClick={() => void handleVoiceUpload()}
+          >
+            {voiceBusy ? "Загрузка…" : "Загрузить голос"}
+          </button>
+        </div>
+
+        {voiceNotice !== null && <p className="notice">{voiceNotice}</p>}
+        {voiceError !== null && (
+          <p className="alert" role="alert">
+            {voiceError}
+          </p>
+        )}
+
+        {voiceReferences.length === 0 ? (
+          <p className="muted">Голосовой образец не загружен.</p>
+        ) : (
+          <ul className="voice__list">
+            {voiceReferences.map((asset) => (
+              <li key={asset.id} className="voice">
+                <div className="reference__meta">
+                  <StatusBadge status={asset.status} />
+                  <span className="muted">
+                    {asset.duration_s === null
+                      ? "длительность неизвестна"
+                      : `${asset.duration_s.toFixed(2)} с`}
+                  </span>
+                  <span className="mono muted">{asset.sha256.slice(0, 12)}</span>
+                </div>
+                <audio className="voice__player" controls preload="none" src={asset.content_url}>
+                  <track kind="captions" />
+                </audio>
+                <div className="reference__actions">
+                  {canApproveReference(asset.status) && (
+                    <button
+                      type="button"
+                      className="button button--small button--ok"
+                      disabled={pendingId === asset.id}
+                      onClick={() => void handleReview(asset, "approve")}
+                    >
+                      {pendingId === asset.id ? "…" : "Утвердить"}
+                    </button>
+                  )}
+                  {canRejectReference(asset.status) && (
+                    <button
+                      type="button"
+                      className="button button--small button--danger"
+                      disabled={pendingId === asset.id}
+                      onClick={() => void handleReview(asset, "reject")}
+                    >
+                      Отклонить
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {preview !== null && (
         <ReferenceLightbox
           asset={preview}
@@ -190,6 +314,7 @@ export function CharacterDetailPage({ characterId }: { characterId: string }) {
           onClose={() => setPreview(null)}
           onApprove={(asset) => void handleReview(asset, "approve")}
           onReject={(asset) => void handleReview(asset, "reject")}
+          onMultiViewChange={handleMultiView}
         />
       )}
     </section>

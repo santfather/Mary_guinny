@@ -33,6 +33,8 @@ export interface ReferenceAsset {
   mime_type: string | null;
   sha256: string;
   has_alpha: boolean | null;
+  duration_s: number | null;
+  multi_view: boolean;
   approved_at: string | null;
   created_at: string;
   content_url: string;
@@ -89,6 +91,7 @@ export interface ShotSummary {
   start_keyframe_artifact_id: string | null;
   start_keyframe_attempt_id: string | null;
   start_keyframe_content_url: string | null;
+  approved_attempt_id: string | null;
 }
 
 export interface SceneSummary {
@@ -165,6 +168,63 @@ export interface Attempt {
   artifact_content_url: string | null;
   composition_revision: number | null;
   visual_plan_revision: number | null;
+  workflow_version: string | null;
+  model_hash: string | null;
+  seed: number | null;
+  duration_s: number | null;
+  render_parameters: Record<string, unknown> | null;
+}
+
+export interface AttemptListItem extends Attempt {
+  shot_id: string;
+  shot_sequence_no: number;
+  scene_id: string;
+  scene_title: string | null;
+  shot_status: string;
+  approved: boolean;
+}
+
+export interface AttemptPage {
+  items: AttemptListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AttemptFilters {
+  scene_id?: string;
+  shot_id?: string;
+  kind?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface JobEvent {
+  sequence: number;
+  event: string;
+  stage: string | null;
+  progress: number | null;
+  attempt_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface JobDetail {
+  id: string;
+  kind: string;
+  status: string;
+  shot_id: string | null;
+  scene_id: string | null;
+  attempts: number;
+  max_attempts: number;
+  error_code: string | null;
+  lease_owner: string | null;
+  lease_until: string | null;
+  run_after: string | null;
+  created_at: string;
+  updated_at: string;
+  last_event: JobEvent | null;
 }
 
 export interface KeyframeResult {
@@ -318,4 +378,145 @@ export interface SeriesRunCreate {
   title?: string;
   shot_orders?: number[];
   stop_on_error: boolean;
+}
+
+/** WP-THERMAL-02 (Q-29): read-only состояние render-agent. */
+export interface RenderAgentStatus {
+  worker_online: boolean;
+  stale: boolean;
+  updated_at: string | null;
+  age_seconds: number | null;
+  worker: string | null;
+  profile: string | null;
+  rendering: boolean;
+  current_job_id: string | null;
+  thermal: { state: string; source: string };
+  power: { source: string | null; battery_percent: number | null };
+  memory: { pressure: string | null; pressure_level: number | null; available_mb: number | null };
+  admission: { allowed: boolean | null; reason: string | null; wait_seconds: number | null };
+  cooldown: { next_allowed_at: string | null; remaining_seconds: number | null };
+  pause: { active: boolean; reason: string | null; since: string | null; waited_seconds: number | null };
+  batch: { index: number | null; size: number | null };
+  queue: {
+    active_render_jobs: number;
+    pending_render_jobs: number;
+    current_run_id: string | null;
+    current_run_status: string | null;
+  };
+  last_events: {
+    ts: string | null;
+    event: string | null;
+    reason: string | null;
+    thermal: string | null;
+    job_id: string | null;
+  }[];
+}
+
+export interface ExportClipInput {
+  shot_id: string;
+  attempt_id: string;
+  trim_start_s?: number;
+  trim_end_s?: number;
+}
+
+export interface ExportCreate {
+  clips: ExportClipInput[];
+  audio_artifact_id?: string;
+}
+
+export interface ExportResult {
+  artifact_id: string;
+  content_url: string;
+  sha256: string;
+  bytes: number;
+  width: number;
+  height: number;
+  fps: number;
+  duration_s: number;
+  clip_count: number;
+  audio_artifact_id: string | null;
+  created_at: string;
+}
+
+export interface PlanWarning {
+  code: string;
+  message: string;
+}
+
+export interface ProjectAudio {
+  artifact_id: string;
+  content_url: string;
+  mime_type: string;
+  bytes: number;
+  duration_s: number;
+}
+
+export type EnergyTier = "low" | "mid" | "high";
+
+export interface TimelineSection {
+  start_s: number;
+  end_s: number;
+  rms: number;
+  energy_tier: EnergyTier;
+}
+
+export interface Timeline {
+  duration_s: number;
+  bpm: number | null;
+  bpm_confidence: number;
+  meter: string;
+  beats: number[];
+  downbeats: number[];
+  sections: TimelineSection[];
+  method: string;
+  analysis_rate_hz: number;
+  warnings: PlanWarning[];
+}
+
+export interface PlanShot {
+  order: number;
+  start_s: number;
+  end_s: number;
+  action: string;
+  prompt: string;
+  framing: CameraFraming;
+  camera_movement: CameraMovement;
+}
+
+export interface PlanScene {
+  order: number;
+  section_index: number;
+  title: string;
+  intent: string;
+  energy_tier: EnergyTier;
+  start_s: number;
+  end_s: number;
+  shots: PlanShot[];
+}
+
+export interface ProductionPlanBody {
+  schema_version: number;
+  logline: string;
+  scenes: PlanScene[];
+  notes: string[];
+  needs_review: boolean;
+}
+
+export interface ProductionPlan {
+  id: string;
+  project_id: string;
+  revision: number;
+  schema_version: number;
+  status: string;
+  source: string;
+  audio_artifact_id: string | null;
+  timeline: Timeline;
+  plan: ProductionPlanBody;
+  warnings: PlanWarning[];
+  created_at: string;
+}
+
+export interface PlanGenerateRequest {
+  brief?: string;
+  use_llm: boolean;
 }

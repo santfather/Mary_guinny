@@ -11,6 +11,9 @@ export type Route =
   | { name: "prop"; id: string }
   | { name: "shots" }
   | { name: "shot"; id: string }
+  | { name: "attempts" }
+  | { name: "exports" }
+  | { name: "plan" }
   | { name: "series"; id: string };
 
 export function parseRoute(hash: string): Route {
@@ -23,6 +26,9 @@ export function parseRoute(hash: string): Route {
   if (head === "props") return { name: "props" };
   if (head === "shots" && id) return { name: "shot", id };
   if (head === "shots") return { name: "shots" };
+  if (head === "attempts") return { name: "attempts" };
+  if (head === "exports") return { name: "exports" };
+  if (head === "plan") return { name: "plan" };
   if (head === "series" && id) return { name: "series", id };
   return { name: "characters" };
 }

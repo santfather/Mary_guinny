@@ -251,6 +251,12 @@ export function LibraryDetailPage({
     detail.reload();
   }
 
+  async function handleMultiView(asset: ReferenceAsset, value: boolean): Promise<void> {
+    const updated = await api.relabel(asset.id, { multi_view: value });
+    setPreview((current) => (current !== null && current.id === updated.id ? updated : current));
+    detail.reload();
+  }
+
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -432,6 +438,7 @@ export function LibraryDetailPage({
           onClose={() => setPreview(null)}
           onApprove={(item) => void handleReview(item, "approve")}
           onReject={(item) => void handleReview(item, "reject")}
+          onMultiViewChange={handleMultiView}
         />
       )}
     </section>

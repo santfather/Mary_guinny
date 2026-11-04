@@ -6,9 +6,12 @@ import type { Project } from "./api/types";
 import { StateView } from "./components/StateView";
 import { useAsync } from "./hooks/useAsync";
 import { useHashRoute, libraryKindOf } from "./hooks/useHashRoute";
+import { AttemptsPage } from "./pages/AttemptsPage";
 import { CharacterDetailPage } from "./pages/CharacterDetailPage";
 import { CharacterListPage } from "./pages/CharacterListPage";
+import { ExportPage } from "./pages/ExportPage";
 import { LibraryDetailPage, LibraryListPage } from "./pages/LibraryPages";
+import { PlanPage } from "./pages/PlanPage";
 import { SeriesRunPage } from "./pages/SeriesRunPage";
 import { ShotDetailPage } from "./pages/ShotDetailPage";
 import { ShotsPage } from "./pages/ShotsPage";
@@ -26,6 +29,9 @@ export function App() {
   const active = list.find((project) => project.id === selectedId) ?? preferredProject(list);
   const inCharacters = route.name === "characters" || route.name === "character";
   const inShots = route.name === "shots" || route.name === "shot";
+  const inAttempts = route.name === "attempts";
+  const inExports = route.name === "exports";
+  const inPlan = route.name === "plan";
   const inSeries = route.name === "series";
   const libraryKind = libraryKindOf(route);
 
@@ -76,6 +82,15 @@ export function App() {
     if (route.name === "shots") {
       return <ShotsPage projectId={active.id} />;
     }
+    if (route.name === "attempts") {
+      return <AttemptsPage projectId={active.id} />;
+    }
+    if (route.name === "exports") {
+      return <ExportPage projectId={active.id} />;
+    }
+    if (route.name === "plan") {
+      return <PlanPage projectId={active.id} />;
+    }
     return <CharacterListPage projectId={active.id} />;
   }
 
@@ -112,6 +127,24 @@ export function App() {
             className={inShots ? "nav__link nav__link--active" : "nav__link"}
           >
             Шоты
+          </a>
+          <a
+            href="#/attempts"
+            className={inAttempts ? "nav__link nav__link--active" : "nav__link"}
+          >
+            Попытки
+          </a>
+          <a
+            href="#/exports"
+            className={inExports ? "nav__link nav__link--active" : "nav__link"}
+          >
+            Сборка
+          </a>
+          <a
+            href="#/plan"
+            className={inPlan ? "nav__link nav__link--active" : "nav__link"}
+          >
+            План
           </a>
         </nav>
         {showProjectPicker && list.length > 1 && active !== null && (

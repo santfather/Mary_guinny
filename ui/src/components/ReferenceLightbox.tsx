@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import type { ReferenceAsset } from "../api/types";
 import { canApproveReference, canRejectReference, poseLabel, viewLabel } from "../labels";
@@ -11,6 +11,7 @@ interface ReferenceLightboxProps {
   onClose: () => void;
   onApprove: (asset: ReferenceAsset) => void;
   onReject: (asset: ReferenceAsset) => void;
+  onMultiViewChange: (asset: ReferenceAsset, value: boolean) => Promise<void>;
 }
 
 export function ReferenceLightbox({
@@ -19,7 +20,11 @@ export function ReferenceLightbox({
   onClose,
   onApprove,
   onReject,
+  onMultiViewChange,
 }: ReferenceLightboxProps) {
+  const [multiViewBusy, setMultiViewBusy] = useState(false);
+  const [multiViewError, setMultiViewError] = useState<string | null>(null);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -30,8 +35,21 @@ export function ReferenceLightbox({
 
   const canApprove = canApproveReference(asset.status);
   const canReject = canRejectReference(asset.status);
+  const canRelabel = asset.status === "draft" || asset.status === "rejected";
   const view = viewLabel(asset.view);
   const pose = poseLabel(asset.pose);
+
+  async function handleMultiView(checked: boolean): Promise<void> {
+    setMultiViewBusy(true);
+    setMultiViewError(null);
+    try {
+      await onMultiViewChange(asset, checked);
+    } catch (error) {
+      setMultiViewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMultiViewBusy(false);
+    }
+  }
 
   return (
     <div
@@ -68,6 +86,7 @@ export function ReferenceLightbox({
           {view !== null && <span className="muted">{view}</span>}
           {pose !== null && <span className="muted">{pose}</span>}
           {asset.expression !== null && <span className="muted">{asset.expression}</span>}
+          {asset.multi_view && <span className="badge badge--warn">многоракурсная</span>}
           <span className="mono muted">{asset.sha256.slice(0, 16)}</span>
           <div className="lightbox__actions">
             {canApprove && (
@@ -92,6 +111,24 @@ export function ReferenceLightbox({
             )}
           </div>
         </div>
+
+        <label className="lightbox__toggle">
+          <input
+            type="checkbox"
+            checked={asset.multi_view}
+            disabled={!canRelabel || multiViewBusy}
+            onChange={(event) => void handleMultiView(event.currentTarget.checked)}
+          />
+          <span>
+            Многоракурсная карточка — нельзя использовать как стартовый кадр
+            {canRelabel ? "" : " (approved не редактируется)"}
+          </span>
+        </label>
+        {multiViewError !== null && (
+          <p className="alert" role="alert">
+            {multiViewError}
+          </p>
+        )}
       </div>
     </div>
   );

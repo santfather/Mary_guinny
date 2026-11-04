@@ -503,6 +503,126 @@ def test_scene_scoped_job_is_rejected(api_client, conn: Connection, scene_id) ->
     assert _events(conn, job_id) == ["failed"]
 
 
+def test_external_prompt_id_is_linked_resumed_and_cleared(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """WP-M4: prompt_id сохраняется до ожидания и снимается при завершении."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    _freeze_other_jobs(conn)
+    job_id = _queue(api_client, shot_id)["job_id"]
+    assert _queue_claim(api_client, "worker-a")["job_id"] == job_id
+
+    url = f"/api/worker/jobs/{job_id}/external"
+    foreign = api_client.post(
+        url,
+        json={"worker_name": "worker-b", "external_id": "prompt-1"},
+        headers=_token(api_client),
+    )
+    assert foreign.status_code == 409
+    assert foreign.json()["detail"]["error"] == "lease_not_owned"
+
+    linked = api_client.post(
+        url,
+        json={"worker_name": "worker-a", "external_id": "prompt-1"},
+        headers=_token(api_client),
+    )
+    assert linked.status_code == 200
+    assert linked.json()["external_id"] == "prompt-1"
+    assert linked.json()["status"] == "leased"
+
+    repeated = api_client.post(
+        url,
+        json={"worker_name": "worker-a", "external_id": "prompt-1"},
+        headers=_token(api_client),
+    )
+    assert repeated.status_code == 200
+
+    conflict = api_client.post(
+        url,
+        json={"worker_name": "worker-a", "external_id": "prompt-2"},
+        headers=_token(api_client),
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["error"] == "external_id_conflict"
+
+    resumed = api_client.post(
+        "/api/worker/resume",
+        json={"worker_name": "worker-a"},
+        headers=_token(api_client),
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["jobs"][0]["external_id"] == "prompt-1"
+
+    video = make_mp4(duration_ms=1000)
+    uploaded = api_client.post(
+        f"/api/worker/jobs/{job_id}/artifacts?worker_name=worker-a&kind=video",
+        content=video,
+        headers={
+            **_token(api_client),
+            "Content-Type": "video/mp4",
+            "X-Content-SHA256": hashlib.sha256(video).hexdigest(),
+        },
+    )
+    assert uploaded.status_code == 201
+    completed = api_client.post(
+        f"/api/worker/jobs/{job_id}/complete",
+        json={"worker_name": "worker-a", "duration_s": 1.0},
+        headers=_token(api_client),
+    )
+    assert completed.status_code == 200
+    assert (
+        conn.execute(
+            text("SELECT external_id FROM jobs WHERE id = :id"), {"id": job_id}
+        ).scalar()
+        is None
+    )
+    assert _events(conn, job_id) == [
+        "claimed",
+        "resumed",
+        "artifact_uploaded",
+        "completed",
+    ]
+
+    # Повторный рендер шота: fail тоже очищает внешний id.
+    retry_job = _queue(api_client, shot_id)["job_id"]
+    assert _queue_claim(api_client, "worker-a")["job_id"] == retry_job
+    assert (
+        api_client.post(
+            f"/api/worker/jobs/{retry_job}/external",
+            json={"worker_name": "worker-a", "external_id": "prompt-3"},
+            headers=_token(api_client),
+        ).status_code
+        == 200
+    )
+    failed = api_client.post(
+        f"/api/worker/jobs/{retry_job}/fail",
+        json={
+            "worker_name": "worker-a",
+            "error_code": "external_prompt_lost",
+            "retryable": False,
+        },
+        headers=_token(api_client),
+    )
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert (
+        conn.execute(
+            text("SELECT external_id FROM jobs WHERE id = :id"), {"id": retry_job}
+        ).scalar()
+        is None
+    )
+    assert _events(conn, retry_job) == ["claimed", "failed"]
+
+
 def test_render_idempotency_and_render_already_active(
     api_client,
     conn: Connection,
@@ -560,3 +680,91 @@ def test_render_idempotency_and_render_already_active(
         ).scalar()
         == 1
     )
+
+
+def test_claim_guard_allows_only_one_render_video(
+    api_client,
+    conn: Connection,
+    project_id,
+    scene_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+    make_shot,
+) -> None:
+    """WP-THERMAL-02: второй воркер не получает тяжёлую job, пока идёт первая."""
+
+    other_shot = make_shot(scene_id=scene_id, sequence_no=2)
+    for target in (shot_id, other_shot):
+        _approve_keyframe(
+            api_client, project_id, target, character_id, location_id, make_png_reference
+        )
+    _freeze_other_jobs(conn)
+    first_job = _queue(api_client, shot_id)["job_id"]
+    second_job = _queue(api_client, other_shot)["job_id"]
+
+    # Тяжёлые job'ы созданы в одной транзакции (одинаковый created_at), поэтому
+    # порядок выдачи не фиксируем — важен только факт «ровно одна».
+    claimed = _queue_claim(api_client, "worker-a")["job_id"]
+    assert claimed in (first_job, second_job)
+    blocked = second_job if claimed == first_job else first_job
+
+    # Пока первая job в lease, вторая тяжёлая job не выдаётся никому.
+    assert _queue_claim(api_client, "worker-b") is None
+    assert (
+        conn.execute(
+            text("SELECT status FROM jobs WHERE id = :id"), {"id": blocked}
+        ).scalar()
+        == "pending"
+    )
+
+    conn.execute(
+        text("UPDATE jobs SET status = 'completed' WHERE id = :id"), {"id": claimed}
+    )
+    assert _queue_claim(api_client, "worker-b")["job_id"] == blocked
+
+
+def test_claim_guard_ignores_postprocess_and_expired_leases(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """Guard не блокирует не-GPU job и не «залипает» на утраченном lease."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    _freeze_other_jobs(conn)
+    job_id = _queue(api_client, shot_id)["job_id"]
+
+    conn.execute(
+        text("UPDATE jobs SET status = 'lease_expired' WHERE id = :id"), {"id": job_id}
+    )
+    assert _queue_claim(api_client, "worker-b") is None  # job не pending/retry_wait
+
+    conn.execute(
+        text("UPDATE jobs SET status = 'retry_wait', run_after = NULL WHERE id = :id"),
+        {"id": job_id},
+    )
+    assert _queue_claim(api_client, "worker-b")["job_id"] == job_id
+
+    postprocess = uuid.uuid4()
+    conn.execute(
+        text(
+            "INSERT INTO jobs (id, kind, shot_id, status)"
+            " VALUES (:id, 'postprocess', :shot_id, 'pending')"
+        ),
+        {"id": postprocess, "shot_id": shot_id},
+    )
+    claimed = api_client.post(
+        "/api/worker/claim",
+        json={"worker_name": "worker-c", "kinds": ["postprocess"]},
+        headers=_token(api_client),
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["job_id"] == str(postprocess)

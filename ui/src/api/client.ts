@@ -1,5 +1,7 @@
 import type {
   Attempt,
+  AttemptFilters,
+  AttemptPage,
   BibleVersion,
   CharacterDetail,
   CharacterSummary,
@@ -7,14 +9,22 @@ import type {
   CompositionLayerInput,
   CompositionRender,
   CompositionSummary,
+  ExportCreate,
+  ExportResult,
+  JobDetail,
+  JobEvent,
   KeyframeResult,
   LayoutExport,
   LibraryEntity,
   LibraryEntityDetail,
   LibraryKind,
+  PlanGenerateRequest,
+  ProductionPlan,
   Project,
+  ProjectAudio,
   ReferenceAsset,
   ReferenceFilters,
+  RenderAgentStatus,
   RenderQueued,
   ScenePlan,
   ScenePlanCandidate,
@@ -27,6 +37,7 @@ import type {
   ShotDetail,
   ShotReference,
   ShotSummary,
+  Timeline,
 } from "./types";
 
 export class ApiError extends Error {
@@ -98,6 +109,18 @@ function referenceQuery(filters: ReferenceFilters): string {
   return query ? `?${query}` : "";
 }
 
+function attemptQuery(filters: AttemptFilters): string {
+  const params = new URLSearchParams();
+  if (filters.scene_id) params.set("scene_id", filters.scene_id);
+  if (filters.shot_id) params.set("shot_id", filters.shot_id);
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+  if (filters.offset !== undefined) params.set("offset", String(filters.offset));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 export interface CompositionWrite {
   width: number;
   height: number;
@@ -119,6 +142,7 @@ export interface ReferenceMeta {
   pose?: string;
   expression?: string;
   role?: string;
+  multi_view?: boolean;
 }
 
 function query(params: Record<string, string | undefined>): string {
@@ -166,6 +190,41 @@ async function uploadReferences(
     uploaded.push(await uploadReference(projectId, params, file));
   }
   return uploaded;
+}
+
+/** Голосовой образец персонажа: `reference_assets(role='voice')`, до 30 секунд. */
+function uploadVoice(characterId: string, file: File): Promise<ReferenceAsset> {
+  return fetch(`/api/characters/${characterId}/voice`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  }).then(parse<ReferenceAsset>);
+}
+
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Универсальная загрузка артефакта (звук для сборки): сервер сверяет sha256. */
+async function uploadArtifact(file: File, kind: string): Promise<{ id: string }> {
+  const digest = await sha256Hex(file);
+  return parse<{ id: string }>(
+    await fetch(`/api/artifacts?kind=${encodeURIComponent(kind)}`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Content-SHA256": digest,
+      },
+      body: file,
+    }),
+  );
 }
 
 export interface LibraryApi {
@@ -240,6 +299,8 @@ export const api = {
 
   uploadReferences,
 
+  uploadVoice,
+
   scenes: (projectId: string) =>
     request<SceneSummary[]>(`/api/projects/${projectId}/scenes`),
 
@@ -252,6 +313,9 @@ export const api = {
   shot: (shotId: string) => request<ShotDetail>(`/api/shots/${shotId}`),
 
   attempts: (shotId: string) => request<Attempt[]>(`/api/shots/${shotId}/attempts`),
+
+  projectAttempts: (projectId: string, filters: AttemptFilters = {}) =>
+    request<AttemptPage>(`/api/projects/${projectId}/attempts${attemptQuery(filters)}`),
 
   attachReference: (
     shotId: string,
@@ -341,6 +405,21 @@ export const api = {
       { method: "POST" },
     ),
 
+  approveAttempt: (shotId: string, attemptId: string) =>
+    request<ShotSummary>(`/api/shots/${shotId}/attempts/${attemptId}/approve`, {
+      method: "POST",
+    }),
+
+  rejectAttempt: (shotId: string, attemptId: string) =>
+    request<ShotSummary>(`/api/shots/${shotId}/attempts/${attemptId}/reject`, {
+      method: "POST",
+    }),
+
+  job: (jobId: string) => request<JobDetail>(`/api/jobs/${jobId}`),
+
+  jobEvents: (jobId: string) =>
+    request<JobEvent[]>(`/api/jobs/${jobId}/events`),
+
   renderShot: (shotId: string) =>
     request<RenderQueued>(`/api/shots/${shotId}/render`, { method: "POST" }),
 
@@ -354,4 +433,38 @@ export const api = {
 
   seriesAction: (runId: string, action: string) =>
     request<SeriesRun>(`/api/series/${runId}/${action}`, { method: "POST" }),
+
+  renderAgentStatus: () => request<RenderAgentStatus>("/api/render-agent/status"),
+
+  exports: (projectId: string) =>
+    request<ExportResult[]>(`/api/projects/${projectId}/exports`),
+
+  createExport: (projectId: string, body: ExportCreate) =>
+    send<ExportResult>(`/api/projects/${projectId}/exports`, "POST", body),
+
+  uploadArtifact,
+
+  projectAudio: (projectId: string) =>
+    request<ProjectAudio>(`/api/projects/${projectId}/audio`),
+
+  attachProjectAudio: (projectId: string, artifactId: string) =>
+    send<ProjectAudio>(`/api/projects/${projectId}/audio`, "POST", {
+      artifact_id: artifactId,
+    }),
+
+  projectTimeline: (projectId: string) =>
+    request<Timeline>(`/api/projects/${projectId}/timeline`),
+
+  productionPlans: (projectId: string) =>
+    request<ProductionPlan[]>(`/api/projects/${projectId}/production-plans`),
+
+  productionPlan: (planId: string) =>
+    request<ProductionPlan>(`/api/production-plans/${planId}`),
+
+  generateProductionPlan: (projectId: string, body: PlanGenerateRequest) =>
+    send<ProductionPlan>(
+      `/api/projects/${projectId}/production-plans/generate`,
+      "POST",
+      body,
+    ),
 };

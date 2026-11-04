@@ -107,6 +107,18 @@ class WorkerClient:
         )
         return dict(result or {})
 
+    def link_external(
+        self, job_id: str, worker_name: str, external_id: str
+    ) -> dict[str, object]:
+        """Сообщает prompt_id ComfyUI (WP-M4) для восстановления после рестарта."""
+
+        result = self._request(
+            "POST",
+            f"/api/worker/jobs/{job_id}/external",
+            body={"worker_name": worker_name, "external_id": external_id},
+        )
+        return dict(result or {})
+
     def upload_artifact(
         self,
         job_id: str,
@@ -137,6 +149,7 @@ class WorkerClient:
         model_hash: str | None = None,
         seed: int | None = None,
         parameters: dict[str, object] | None = None,
+        peak_mem_mb: int | None = None,
     ) -> dict[str, object]:
         result = self._request(
             "POST",
@@ -149,6 +162,7 @@ class WorkerClient:
                 "model_hash": model_hash,
                 "seed": seed,
                 "parameters": parameters,
+                "peak_mem_mb": peak_mem_mb,
             },
         )
         return dict(result or {})
@@ -192,6 +206,22 @@ class WorkerClient:
         if run_id:
             body["run_id"] = run_id
         result = self._request("POST", "/api/worker/series/next", body=body)
+        return dict(result or {})
+
+    def get_presets(self) -> dict[str, object]:
+        """Рекомендация пресета рендера (WP-M7); эндпоинт только читает."""
+
+        result = self._request("GET", "/api/presets")
+        return dict(result or {})
+
+    def series_pause(self, run_id: str) -> dict[str, object]:
+        """Thermal Pause (WP-THERMAL-02): штатная пауза прогона человеком/воркером."""
+
+        result = self._request("POST", f"/api/series/{run_id}/pause")
+        return dict(result or {})
+
+    def series_resume(self, run_id: str) -> dict[str, object]:
+        result = self._request("POST", f"/api/series/{run_id}/resume")
         return dict(result or {})
 
     def download(self, content_url: str, destination: Path) -> str:

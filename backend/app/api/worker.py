@@ -25,6 +25,8 @@ from app.api.worker_schemas import (
     WorkerClaimRequest,
     WorkerCompleteOut,
     WorkerCompleteRequest,
+    WorkerExternalOut,
+    WorkerExternalRequest,
     WorkerFailOut,
     WorkerFailRequest,
     WorkerHeartbeatOut,
@@ -279,6 +281,13 @@ WITH next AS (
       AND (j.run_after IS NULL OR j.run_after <= now())
       AND j.kind = ANY(CAST(:kinds AS text[]))
       AND j.attempts < j.max_attempts
+      AND (
+          CAST(:guard_render AS boolean) = false
+          OR NOT EXISTS (
+              SELECT 1
+              FROM jobs a
+              WHERE a.kind = 'render_video'
+                AND a.status IN ('leased', 'running')))
       AND NOT EXISTS (
           SELECT 1
           FROM job_dependencies d
@@ -300,6 +309,24 @@ RETURNING jobs.id
 """
 )
 
+# WP-THERMAL-02: ключ advisory-блокировки «один GPU-рендер». Один и тот же
+# ключ должен использоваться всеми путями, которые проверяют активный рендер.
+RENDER_GUARD_KEY = "mary_studio:render_video_guard"
+
+
+def acquire_render_guard(session: Session) -> None:
+    """Сериализует проверки активного `render_video` до конца транзакции.
+
+    `NOT EXISTS` в одном операторе не защищает от гонки: при READ COMMITTED два
+    параллельных claim видят пустое множество активных рендеров и оба получают
+    lease. Advisory-блокировка живёт до commit/rollback, миграции не требует.
+    """
+
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key)::bigint)"),
+        {"key": RENDER_GUARD_KEY},
+    )
+
 
 @router.post("/claim", response_model=WorkerClaimOut | None)
 def claim(
@@ -310,6 +337,9 @@ def claim(
     _expire_leases(session)
     worker = _register_worker(session, payload.worker_name)
     lease_seconds = payload.lease_seconds or 60
+    guard_render = "render_video" in payload.kinds
+    if guard_render:
+        acquire_render_guard(session)
 
     job_id = session.scalar(
         _CLAIM_SQL,
@@ -317,6 +347,7 @@ def claim(
             "kinds": list(payload.kinds),
             "worker_name": payload.worker_name,
             "lease_seconds": lease_seconds,
+            "guard_render": guard_render,
         },
     )
     if job_id is None:
@@ -423,6 +454,43 @@ def heartbeat(
         status=job.status,
         sequence=event.sequence,
         lease_until=_lease_until(job),
+    )
+
+
+@router.post("/jobs/{job_id}/external", response_model=WorkerExternalOut)
+def link_external(
+    job_id: uuid.UUID,
+    payload: WorkerExternalRequest,
+    session: Session = Depends(get_session),
+) -> WorkerExternalOut:
+    """Фиксирует внешний id рендера (WP-M4).
+
+    Воркер сообщает `prompt_id` сразу после постановки в ComfyUI, чтобы после
+    рестарта можно было проверить `/history` и не запускать дубликат. Повтор с
+    тем же id идемпотентен; другой id при уже сохранённом — конфликт.
+    """
+
+    job = _lock_job(session, job_id)
+    _require_lease(job, payload.worker_name)
+    if job.status not in FINALIZABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "job_not_active", "status": job.status},
+        )
+    if job.external_id is not None and job.external_id != payload.external_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "external_id_conflict", "external_id": job.external_id},
+        )
+    if job.external_id is None:
+        # Отдельного события нет: имена событий ограничены `ck_events_event`,
+        # а расширять его в WP-M4 (без миграций) нельзя. Состояние видно в
+        # `jobs.external_id` и в ответе `POST /api/worker/resume`.
+        job.external_id = payload.external_id
+        session.commit()
+        session.refresh(job)
+    return WorkerExternalOut(
+        job_id=job.id, status=job.status, external_id=job.external_id
     )
 
 
@@ -562,6 +630,8 @@ def complete(
     job.status = "completed"
     job.error_code = None
     job.lease_until = None
+    # Внешний id больше не нужен: он помечал именно текущий рендер.
+    job.external_id = None
     job.heartbeat_at = _now()
     artifact_ids = [artifact.id for artifact in artifacts]
     _append_event(
@@ -601,6 +671,7 @@ def fail(
     retry = payload.retryable and job.attempts < job.max_attempts
     job.error_code = payload.error_code
     job.lease_until = None
+    job.external_id = None
     job.heartbeat_at = _now()
     if retry:
         job.status = "retry_wait"

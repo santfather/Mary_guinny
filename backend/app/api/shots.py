@@ -379,6 +379,90 @@ def list_attempts(
     return attempt_outs(session, shot_id)
 
 
+def _require_video_attempt(
+    session: Session, shot: Shot, attempt_id: uuid.UUID
+) -> RenderAttempt:
+    """Ревью касается только завершённой видео-попытки этого шота."""
+
+    attempt = session.get(RenderAttempt, attempt_id)
+    if attempt is None or attempt.shot_id != shot.id:
+        raise HTTPException(status_code=404, detail="render attempt not found")
+    if attempt.kind != "video":
+        raise HTTPException(status_code=409, detail="attempt is not a video attempt")
+    if attempt.status != "completed":
+        raise HTTPException(status_code=409, detail="attempt is not completed")
+    return attempt
+
+
+def _require_attempt_artifact(session: Session, attempt: RenderAttempt) -> Artifact:
+    artifact = session.scalar(
+        select(Artifact)
+        .where(Artifact.attempt_id == attempt.id)
+        .order_by(Artifact.created_at.desc())
+        .limit(1)
+    )
+    if artifact is None:
+        raise HTTPException(status_code=409, detail="attempt artifact is missing")
+    return artifact
+
+
+@router.post(
+    "/shots/{shot_id}/attempts/{attempt_id}/approve", response_model=ShotSummary
+)
+def approve_attempt(
+    shot_id: uuid.UUID,
+    attempt_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> ShotSummary:
+    """Утверждает видео-попытку: единственный писатель `approved_attempt_id`.
+
+    Не меняет стартовый кадр (S9): `start_keyframe_*` пишет только promote-keyframe.
+    """
+
+    shot = require_shot(session, shot_id)
+    attempt = _require_video_attempt(session, shot, attempt_id)
+    _require_attempt_artifact(session, attempt)
+    project_id = shot_project_id(session, shot)
+    if shot.approved_attempt_id == attempt.id and shot.status == "approved":
+        return ShotSummary.from_shot(shot, project_id)
+
+    shot.approved_attempt_id = attempt.id
+    shot.status = "approved"
+    session.commit()
+    session.refresh(shot)
+    return ShotSummary.from_shot(shot, project_id)
+
+
+@router.post(
+    "/shots/{shot_id}/attempts/{attempt_id}/reject", response_model=ShotSummary
+)
+def reject_attempt(
+    shot_id: uuid.UUID,
+    attempt_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> ShotSummary:
+    """Отклоняет видео-попытку, не удаляя артефакт и историю.
+
+    Если отклоняется ранее утверждённая попытка, указатель снимается: статус шота
+    не должен говорить `approved` без утверждённого результата.
+    """
+
+    shot = require_shot(session, shot_id)
+    attempt = _require_video_attempt(session, shot, attempt_id)
+    project_id = shot_project_id(session, shot)
+    changed = False
+    if shot.approved_attempt_id == attempt.id:
+        shot.approved_attempt_id = None
+        changed = True
+    if shot.status != "changes_requested":
+        shot.status = "changes_requested"
+        changed = True
+    if changed:
+        session.commit()
+        session.refresh(shot)
+    return ShotSummary.from_shot(shot, project_id)
+
+
 def _keyframe_parameters(
     session: Session, composition: ShotComposition
 ) -> dict[str, object]:
@@ -437,6 +521,13 @@ def _keyframe_from_reference(
     asset = session.get(ReferenceAsset, asset_id)
     if asset is None or asset.project_id != shot_project_id(session, shot):
         raise HTTPException(status_code=404, detail="reference asset not found")
+    if asset.mime_type is None or not asset.mime_type.startswith("image/"):
+        raise HTTPException(status_code=409, detail="reference asset is not an image")
+    if (asset.metadata_json or {}).get("multi_view") is True:
+        raise HTTPException(
+            status_code=409,
+            detail="multi-view reference cannot be used as a start frame",
+        )
     if asset.status != "approved":
         raise HTTPException(status_code=409, detail="reference asset must be approved")
     if not store.exists(asset.storage_key):

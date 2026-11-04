@@ -3,16 +3,28 @@ const STATUS_LABELS: Record<string, string> = {
   approved: "Утверждён",
   rejected: "Отклонён",
   superseded: "Заменён",
+  changes_requested: "Требует изменений",
   active: "Активен",
   archived: "В архиве",
   pending: "В очереди",
+  leased: "Взят воркером",
   running: "Идёт",
+  retry_wait: "Ждёт повтора",
+  cancel_requested: "Запрошена отмена",
+  lease_expired: "Lease истёк",
   paused: "Пауза",
   stopping: "Останавливается",
   completed: "Завершён",
   cancelled: "Отменён",
   failed: "Ошибка",
   skipped: "Пропущен",
+};
+
+// Этапы, которые воркер присылает в heartbeat (`stage`).
+const STAGE_LABELS: Record<string, string> = {
+  prepare: "подготовка",
+  sampling: "генерация",
+  upload: "загрузка",
 };
 
 const VIEW_LABELS: Record<string, string> = {
@@ -120,14 +132,28 @@ export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status;
 }
 
+export function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
 export function statusTone(status: string): "ok" | "danger" | "warn" | "muted" {
   if (status === "approved" || status === "active" || status === "completed") return "ok";
-  if (status === "rejected" || status === "failed") return "danger";
+  if (
+    status === "rejected" ||
+    status === "failed" ||
+    status === "changes_requested" ||
+    status === "lease_expired"
+  ) {
+    return "danger";
+  }
   if (
     status === "superseded" ||
     status === "paused" ||
     status === "stopping" ||
-    status === "running"
+    status === "running" ||
+    status === "leased" ||
+    status === "retry_wait" ||
+    status === "cancel_requested"
   ) {
     return "warn";
   }

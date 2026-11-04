@@ -35,6 +35,7 @@ class ShotSummary(BaseModel):
     start_keyframe_artifact_id: uuid.UUID | None
     start_keyframe_attempt_id: uuid.UUID | None
     start_keyframe_content_url: str | None
+    approved_attempt_id: uuid.UUID | None
 
     @classmethod
     def from_shot(cls, shot: Shot, project_id: uuid.UUID) -> "ShotSummary":
@@ -52,6 +53,7 @@ class ShotSummary(BaseModel):
             start_keyframe_content_url=(
                 f"/api/artifacts/{keyframe_id}/content" if keyframe_id is not None else None
             ),
+            approved_attempt_id=shot.approved_attempt_id,
         )
 
 
@@ -228,6 +230,12 @@ class AttemptOut(BaseModel):
     artifact_content_url: str | None
     composition_revision: int | None
     visual_plan_revision: int | None
+    workflow_version: str | None
+    model_hash: str | None
+    seed: int | None
+    duration_s: float | None
+    # Подмножество render-параметров без `workflow_snapshot`.
+    render_parameters: dict[str, object] | None
 
     @classmethod
     def from_attempt(
@@ -255,13 +263,75 @@ class AttemptOut(BaseModel):
             ),
             composition_revision=revision,
             visual_plan_revision=plan_revision,
+            workflow_version=attempt.workflow_version,
+            model_hash=attempt.model_hash,
+            seed=attempt.seed,
+            duration_s=float(attempt.duration_s) if attempt.duration_s is not None else None,
+            render_parameters=_render_parameters(parameters),
         )
+
+
+RENDER_PARAMETER_KEYS = (
+    "width",
+    "height",
+    "num_frames",
+    "frame_rate",
+    "fps",
+    "cfg_scale",
+    "aspect_ratio",
+    "long_side",
+    "shot_key",
+)
+
+
+def _render_parameters(parameters: object) -> dict[str, object] | None:
+    if not isinstance(parameters, dict):
+        return None
+    subset = {key: parameters[key] for key in RENDER_PARAMETER_KEYS if key in parameters}
+    return subset or None
 
 
 class ShotDetail(ShotSummary):
     references: list[ShotReferenceOut]
     composition_revisions: list[CompositionSummary]
     attempts: list[AttemptOut]
+
+
+class AttemptListItemOut(AttemptOut):
+    """Попытка в списке проекта (WP-M5): к полям попытки добавлен её шот."""
+
+    shot_id: uuid.UUID
+    shot_sequence_no: int
+    scene_id: uuid.UUID
+    scene_title: str | None
+    shot_status: str
+    approved: bool
+
+    @classmethod
+    def from_attempt_on_shot(
+        cls,
+        attempt: RenderAttempt,
+        artifact_id: uuid.UUID | None,
+        shot: Shot,
+        scene: Scene,
+    ) -> "AttemptListItemOut":
+        base = AttemptOut.from_attempt(attempt, artifact_id)
+        return cls(
+            **base.model_dump(),
+            shot_id=shot.id,
+            shot_sequence_no=shot.sequence_no,
+            scene_id=scene.id,
+            scene_title=scene.title,
+            shot_status=shot.status,
+            approved=shot.approved_attempt_id == attempt.id,
+        )
+
+
+class AttemptPage(BaseModel):
+    items: list[AttemptListItemOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class RenderQueuedOut(BaseModel):
