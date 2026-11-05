@@ -13,6 +13,8 @@ from app.api.exports import router as exports_router
 from app.api.jobs import router as jobs_router
 from app.api.library import router as library_router
 from app.api.lipsync import router as lipsync_router
+from app.api.mouth_animation import router as mouth_animation_router
+from app.api.mouth_calibrations import router as mouth_calibrations_router
 from app.api.presets import router as presets_router
 from app.api.production_plans import router as production_plans_router
 from app.api.projects import router as projects_router
@@ -26,6 +28,8 @@ from app.api.series_runs import (
     worker_router as series_runs_worker_router,
 )
 from app.api.shots import router as shots_router
+from app.api.shot_audio import router as shot_audio_router
+from app.api.viseme_set import router as viseme_set_router
 from app.api.voice import router as voice_router
 from app.api.worker import router as worker_router
 from app.config import Settings
@@ -44,7 +48,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(reference_assets_router)
     app.include_router(library_router)
     app.include_router(shots_router)
+    app.include_router(shot_audio_router)
     app.include_router(lipsync_router)
+    app.include_router(mouth_calibrations_router)
+    app.include_router(mouth_animation_router)
+    app.include_router(viseme_set_router)
     app.include_router(attempts_router)
     app.include_router(compositions_router)
     app.include_router(scene_plans_router)

@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "series_runs",
     "series_items",
     "production_plans",
+    "mouth_calibrations",
 }
 
 

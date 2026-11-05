@@ -240,6 +240,8 @@ export interface RenderQueued {
   status: string;
   shot_id: string;
   start_keyframe_artifact_id: string;
+  /** WP-THERMAL-03 (T-07): облегчённая preview-попытка. */
+  preview: boolean;
 }
 
 export interface ShotDetail extends ShotSummary {
@@ -391,7 +393,12 @@ export interface RenderAgentStatus {
   rendering: boolean;
   current_job_id: string | null;
   thermal: { state: string; source: string };
-  power: { source: string | null; battery_percent: number | null };
+  power: {
+    source: string | null;
+    battery_percent: number | null;
+    /** WP-THERMAL-03 (T-06): только чтение `pmset -g`; null = Unknown. */
+    low_power_mode: boolean | null;
+  };
   memory: { pressure: string | null; pressure_level: number | null; available_mb: number | null };
   admission: { allowed: boolean | null; reason: string | null; wait_seconds: number | null };
   cooldown: { next_allowed_at: string | null; remaining_seconds: number | null };
@@ -519,4 +526,140 @@ export interface ProductionPlan {
 export interface PlanGenerateRequest {
   brief?: string;
   use_llm: boolean;
+}
+
+/** WP-VOICE-02: готовая запись шота (`reference_assets(role='shot_audio')` + link). */
+export interface ShotAudio {
+  reference_asset_id: string;
+  shot_id: string;
+  link_id: string;
+  status: string;
+  selected: boolean;
+  sha256: string;
+  mime_type: string | null;
+  duration_s: number;
+  sample_rate: number | null;
+  channels: number | null;
+  codec: string | null;
+  format_name: string | null;
+  original_name: string | null;
+  content_url: string;
+  work_sample_rate: number;
+  work_channels: number;
+  envelope_rate_hz: number;
+  speech_ratio: number | null;
+  speech_segments: { start_s: number; end_s: number }[];
+  silence_segments: { start_s: number; end_s: number }[];
+  approved_at: string | null;
+  created_at: string;
+}
+
+export interface ShotAudioWaveform {
+  reference_asset_id: string;
+  duration_s: number;
+  buckets: number;
+  peaks: number[];
+}
+
+/** Нормализованная область рта (0…1) и параметры чувствительности. */
+export interface MouthCalibration {
+  id: string;
+  project_id: string;
+  shot_id: string;
+  reference_asset_id: string | null;
+  keyframe_artifact_id: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  max_open: number;
+  sensitivity: number;
+  smoothing: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MouthCalibrationInput {
+  reference_asset_id?: string;
+  keyframe_artifact_id?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  max_open: number;
+  sensitivity: number;
+  smoothing: number;
+}
+
+export interface MouthAnimationRequest {
+  source_kind?: "image" | "video";
+  reference_asset_id?: string;
+  audio_asset_id?: string;
+  calibration_id?: string;
+  // WP-VOICE-06: legacy-движок по умолчанию, новый — viseme_frame_blend_v1.
+  engine?: "mouth_animation_mvp" | "viseme_frame_blend_v1";
+  timing?: unknown;
+  blend_ms?: number;
+  min_hold_ms?: number;
+  close_in_silence?: boolean;
+  use_rhubarb?: boolean;
+}
+
+/** WP-VOICE-06: один кадр морды из набора `viseme_<state>`. */
+export interface VisemeVariant {
+  state: string;
+  reference_asset_id: string | null;
+  status: string;
+  approved: boolean;
+  implicit: boolean;
+  width: number | null;
+  height: number | null;
+  sha256: string;
+  content_url: string;
+}
+
+export interface VisemeBlocker {
+  code: string;
+  state: string;
+  message: string;
+}
+
+/** Отчёт совместимости набора: готовность, блокеры и метрики. */
+export interface VisemeSetReport {
+  shot_id: string;
+  source_reference_asset_id: string | null;
+  source_artifact_id: string | null;
+  calibration_id: string;
+  variants: VisemeVariant[];
+  missing: string[];
+  ready: boolean;
+  blockers: VisemeBlocker[];
+  metrics: {
+    outside_ratio_max?: number;
+    inside_ratio?: Record<string, number>;
+    flicker_ratio?: number;
+    thresholds?: Record<string, number>;
+  };
+  preview_url: string;
+}
+
+export interface MouthAnimationResult {
+  shot_id: string;
+  job_id: string;
+  attempt_id: string;
+  artifact_id: string;
+  content_url: string;
+  sha256: string;
+  bytes: number;
+  width: number;
+  height: number;
+  fps: number;
+  frames: number;
+  duration_s: number;
+  audio_asset_id: string;
+  calibration_id: string;
+  mode: string;
+  limitation: string;
 }

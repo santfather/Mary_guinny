@@ -464,3 +464,40 @@ def test_series_next_idle_when_no_runs(api_client) -> None:
     )
     assert response.status_code == 200
     assert response.json() == {"status": "idle", "job_id": None}
+
+
+def test_series_next_busy_while_foreign_render_is_leased(
+    api_client, conn: Connection, project_id, scene_id, make_shot
+) -> None:
+    """WP-THERMAL-03: чужой активный рендер не даёт серии создать вторую job."""
+
+    _make_shot(conn, make_shot, scene_id, sequence_no=1)
+    _make_shot(conn, make_shot, scene_id, sequence_no=2)
+    foreign_shot = _make_shot(conn, make_shot, scene_id, sequence_no=3)
+    run = _create_run(api_client, project_id)
+    api_client.post(f"/api/series/{run['run_id']}/start")
+
+    first = _next(api_client, run["run_id"])
+    assert first["status"] == "queued"
+    _set_job_status(conn, first["job_id"], "completed")
+
+    # Ручной рендер другого шота уже в lease: серия обязана ответить `busy`.
+    conn.execute(
+        text(
+            "INSERT INTO jobs (id, kind, shot_id, status, lease_until)"
+            " VALUES (:id, 'render_video', :shot, 'leased', now() + interval '5 minutes')"
+        ),
+        {"id": uuid.uuid4(), "shot": foreign_shot},
+    )
+    second = _next(api_client, run["run_id"])
+    assert second["status"] == "busy"
+    assert second["job_status"] == "leased"
+    assert len(_jobs_for_run(conn, run["run_id"])) == 1
+
+    conn.execute(
+        text("UPDATE jobs SET status = 'completed' WHERE shot_id = :shot"),
+        {"shot": foreign_shot},
+    )
+    third = _next(api_client, run["run_id"])
+    assert third["status"] == "queued"
+    assert len(_jobs_for_run(conn, run["run_id"])) == 2

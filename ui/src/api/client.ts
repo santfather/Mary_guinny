@@ -18,6 +18,10 @@ import type {
   LibraryEntity,
   LibraryEntityDetail,
   LibraryKind,
+  MouthAnimationRequest,
+  MouthAnimationResult,
+  MouthCalibration,
+  MouthCalibrationInput,
   PlanGenerateRequest,
   ProductionPlan,
   Project,
@@ -34,10 +38,14 @@ import type {
   SeriesRun,
   SeriesRunCreate,
   SeriesRunSummary,
+  ShotAudio,
+  ShotAudioWaveform,
   ShotDetail,
   ShotReference,
   ShotSummary,
   Timeline,
+  VisemeSetReport,
+  VisemeVariant,
 } from "./types";
 
 export class ApiError extends Error {
@@ -53,6 +61,63 @@ export class ApiError extends Error {
 const DETAIL_MESSAGES: Record<string, string> = {
   render_already_active: "Рендер уже запущен",
   duplicate_reference: "Такой файл уже загружен в проект",
+  // WP-VOICE-02: импорт и подготовка аудио.
+  unsupported_audio_type: "Неподдерживаемый формат: нужен WAV, MP3, M4A или AAC",
+  empty_body: "Файл пустой",
+  sha256_mismatch: "Контрольная сумма файла не совпала с заявленной",
+  ffprobe_failed: "ffprobe не смог прочитать файл",
+  missing_audio_stream: "В файле нет аудиодорожки",
+  invalid_audio: "Файл не является корректной аудиозаписью",
+  audio_too_long: "Запись длиннее допустимого предела",
+  audio_work_copy_missing: "Рабочая PCM-копия записи отсутствует",
+  audio_work_copy_invalid: "Рабочая PCM-копия записи повреждена",
+  envelope_missing: "У записи нет огибающей",
+  work_audio_missing: "Рабочая копия записи потеряна в storage",
+  // WP-VOICE-02: блокировки Talking Preview.
+  audio_required: "Нужна утверждённая запись: импортируйте и утвердите аудио",
+  audio_not_approved: "Запись ещё не утверждена человеком",
+  source_image_required: "Нужен approved-референс или утверждённый стартовый кадр",
+  source_reference_not_approved: "Референс не утверждён человеком",
+  source_file_missing: "Файл источника не найден в storage",
+  source_image_invalid: "Источник не декодируется как изображение",
+  reference_not_linked: "Референс не привязан к шоту",
+  video_talking_not_supported:
+    "Video Talking не поддерживается: нет надёжного tracking морды. Используйте image-режим",
+  calibration_required: "Сначала сохраните калибровку области рта",
+  calibration_source_mismatch: "Калибровка относится к другому источнику изображения",
+  calibration_conflict: "Калибровка уже сохраняется, повторите запрос",
+  mouth_region_out_of_bounds: "Область рта выходит за кадр",
+  ffmpeg_missing: "ffmpeg не найден в PATH",
+  ffmpeg_failed: "FFmpeg не смог собрать MP4",
+  invalid_preview: "Результат не прошёл проверку MP4 и аудиодорожки",
+  // WP-VOICE-06: viseme-набор и новый движок.
+  viseme_state_invalid: "Неизвестная форма рта",
+  viseme_image_invalid: "Кадр морды не читается как PNG или JPEG",
+  viseme_set_incomplete: "Набор viseme-кадров неполный",
+  viseme_set_not_approved: "Не все viseme-кадры утверждены человеком",
+  viseme_set_blocked:
+    "Набор viseme-кадров не прошёл проверку совместимости — генерация заблокирована",
+  viseme_resolution_mismatch: "Кадры набора разного разрешения",
+  viseme_head_shift: "Голова в кадрах набора сдвинута",
+  viseme_outside_mouth_changes: "Кадры отличаются вне области морды",
+  viseme_closed_mismatch: "Кадр closed не совпадает с источником",
+  viseme_no_articulation: "Форма рта в кадре не отличается от закрытой",
+  viseme_flicker_risk: "При переключении кадров будет мерцание",
+  viseme_file_missing: "Файл viseme-кадра потерян в storage",
+  viseme_timing_required: "Нужен viseme timing JSON или проверенный Rhubarb",
+  viseme_timing_invalid: "Viseme timing JSON невалиден",
+  viseme_pause_not_closed: "В паузе рот не закрыт",
+  rhubarb_not_installed: "Rhubarb не установлен",
+  rhubarb_not_executable: "Файл Rhubarb не исполняемый",
+  rhubarb_arch_unknown: "Не удалось определить архитектуру Rhubarb",
+  rhubarb_arch_unsupported: "Бинарник Rhubarb не для этой архитектуры",
+  rhubarb_res_missing: "Рядом с бинарником Rhubarb нет каталога res/",
+  rhubarb_input_unsupported: "Rhubarb принимает только .wav и .ogg",
+  rhubarb_runs_under_rosetta: "Rhubarb работает через Rosetta 2 (сборка x86_64)",
+  rhubarb_sha256_not_pinned: "SHA-256 Rhubarb не закреплён в настройках",
+  rhubarb_sha256_mismatch: "SHA-256 бинарника Rhubarb не совпал с закреплённым",
+  rhubarb_output_invalid: "Rhubarb вернул неожиданный JSON",
+  rhubarb_failed: "Rhubarb не смог разобрать запись",
 };
 
 function describeDetail(detail: unknown): string {
@@ -227,6 +292,94 @@ async function uploadArtifact(file: File, kind: string): Promise<{ id: string }>
   );
 }
 
+const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+};
+
+function audioMime(file: File): string {
+  const declared = (file.type || "").split(";")[0].trim().toLowerCase();
+  if (declared !== "") return declared;
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return AUDIO_MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
+}
+
+/** Импорт готовой записи: оригинал сохраняется на сервере без изменений. */
+async function uploadShotAudio(shotId: string, file: File): Promise<ShotAudio> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": audioMime(file),
+    "X-Content-SHA256": await sha256Hex(file),
+  };
+  // HTTP-заголовки не переносят не-ASCII: имя с кириллицей просто не передаём.
+  if (/^[\x20-\x7e]+$/.test(file.name)) headers["X-Original-Name"] = file.name;
+  return parse<ShotAudio>(
+    await fetch(`/api/shots/${shotId}/audio`, { method: "POST", headers, body: file }),
+  );
+}
+
+/** PNG предпросмотра рта: blob URL, вызывающий код обязан его освободить. */
+async function mouthCalibrationPreview(
+  shotId: string,
+  body: MouthCalibrationInput,
+  state: "closed" | "open",
+): Promise<string> {
+  const response = await fetch(
+    `/api/shots/${shotId}/mouth-calibrations/preview?state=${state}`,
+    {
+      method: "POST",
+      headers: { Accept: "image/png", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload: unknown = await response.json();
+      if (payload !== null && typeof payload === "object" && "detail" in payload) {
+        message = describeDetail((payload as { detail: unknown }).detail);
+      }
+    } catch {
+      // тело ошибки не JSON — оставляем код статуса
+    }
+    throw new ApiError(response.status, message);
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
+/** WP-VOICE-06: отчёт совместимости viseme-набора шота. */
+function visemeSet(
+  shotId: string,
+  referenceAssetId?: string,
+  calibrationId?: string,
+): Promise<VisemeSetReport> {
+  const params = new URLSearchParams();
+  if (referenceAssetId) params.set("reference_asset_id", referenceAssetId);
+  if (calibrationId) params.set("calibration_id", calibrationId);
+  const suffix = params.toString();
+  return request<VisemeSetReport>(
+    `/api/shots/${shotId}/viseme-set${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+/** Импорт одного кадра морды: файл сохраняется черновиком, исходник не меняется. */
+function uploadViseme(
+  shotId: string,
+  state: string,
+  file: File,
+): Promise<VisemeVariant> {
+  return fetch(`/api/shots/${shotId}/viseme-set/${encodeURIComponent(state)}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": file.type || "image/png",
+    },
+    body: file,
+  }).then(parse<VisemeVariant>);
+}
+
 export interface LibraryApi {
   list: (projectId: string) => Promise<LibraryEntity[]>;
   get: (id: string) => Promise<LibraryEntityDetail>;
@@ -311,6 +464,40 @@ export const api = {
     send<ShotSummary>(`/api/scenes/${sceneId}/shots`, "POST", body),
 
   shot: (shotId: string) => request<ShotDetail>(`/api/shots/${shotId}`),
+
+  // WP-VOICE-02: готовые записи шота, калибровка рта и Talking Preview.
+  shotAudio: (shotId: string) => request<ShotAudio[]>(`/api/shots/${shotId}/audio`),
+
+  uploadShotAudio,
+
+  shotAudioWaveform: (shotId: string, assetId: string, buckets = 400) =>
+    request<ShotAudioWaveform>(
+      `/api/shots/${shotId}/audio/${assetId}/waveform?buckets=${buckets}`,
+    ),
+
+  mouthCalibrations: (shotId: string) =>
+    request<MouthCalibration[]>(`/api/shots/${shotId}/mouth-calibrations`),
+
+  saveMouthCalibration: (shotId: string, body: MouthCalibrationInput) =>
+    send<MouthCalibration>(
+      `/api/shots/${shotId}/mouth-calibrations`,
+      "POST",
+      body,
+    ),
+
+  mouthCalibrationPreview,
+
+  // WP-VOICE-06: набор кадров морды и проверка совместимости.
+  visemeSet,
+
+  uploadViseme,
+
+  createMouthAnimation: (shotId: string, body: MouthAnimationRequest) =>
+    send<MouthAnimationResult>(
+      `/api/shots/${shotId}/mouth-animation`,
+      "POST",
+      body,
+    ),
 
   attempts: (shotId: string) => request<Attempt[]>(`/api/shots/${shotId}/attempts`),
 
@@ -420,8 +607,8 @@ export const api = {
   jobEvents: (jobId: string) =>
     request<JobEvent[]>(`/api/jobs/${jobId}/events`),
 
-  renderShot: (shotId: string) =>
-    request<RenderQueued>(`/api/shots/${shotId}/render`, { method: "POST" }),
+  renderShot: (shotId: string, preview = false) =>
+    send<RenderQueued>(`/api/shots/${shotId}/render`, "POST", { preview }),
 
   seriesRuns: (projectId: string) =>
     request<SeriesRunSummary[]>(`/api/projects/${projectId}/series/runs`),

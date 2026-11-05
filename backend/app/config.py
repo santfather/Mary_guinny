@@ -26,6 +26,20 @@ class Settings(BaseSettings):
     # WP-M6: голосовой образец персонажа (reference_assets role='voice').
     voice_upload_max_bytes: int = 16 * 1024 * 1024
     voice_max_duration_s: float = 30.0
+    # WP-VOICE-02: аудио шота (reference_assets role='shot_audio') и mouth-анимация.
+    shot_audio_upload_max_bytes: int = 32 * 1024 * 1024
+    shot_audio_max_duration_s: float = 120.0
+    mouth_animation_fps: int = 24
+    mouth_animation_max_side: int = 1080
+    # WP-VOICE-06: набор viseme-кадров (reference_assets role='viseme_<state>').
+    viseme_upload_max_bytes: int = 32 * 1024 * 1024
+    viseme_blend_ms: float = 60.0
+    viseme_min_hold_ms: float = 60.0
+    viseme_outside_max_ratio: float = 0.01
+    viseme_max_shift_px: int = 8
+    # WP-VOICE-06: Rhubarb Lip Sync проверяется локально, скачивание не выполняется.
+    rhubarb_binary: Path = Path.home() / ".mary-studio" / "tools" / "rhubarb-1.14.0" / "rhubarb"
+    rhubarb_sha256: str = ""
     # WP-05A: планировщик сцены. Vision — только советующий источник.
     ollama_base_url: str = "http://127.0.0.1:11434"
     planner_model: str = "gemma3:4b"

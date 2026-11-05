@@ -1,0 +1,1 @@
+VISUAL DRAFTS ONLY. Original uploaded source is 960x960, not the approved GNS-05 941x1672 image. These composites are NOT approved or guaranteed to pass Mary Studio viseme compatibility checks. The source image outside the mouth patch is preserved; mouth patches are synthesized from a generated reference grid. Do not use as production assets without visual review and alignment.

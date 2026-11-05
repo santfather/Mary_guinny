@@ -184,6 +184,24 @@ def parse_power(text: str | None) -> PowerReading:
     return PowerReading(source, percent)
 
 
+def parse_low_power_mode(text: str | None) -> bool | None:
+    """Low Power Mode из `pmset -g` (только чтение, WP-THERMAL-03/T-06).
+
+    `None` — источник недоступен или поле отсутствует: UI обязан показать Unknown,
+    а не выдумывать выключенный режим.
+    """
+
+    if not text:
+        return None
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "lowpowermode":
+            if parts[1] in ("0", "1"):
+                return parts[1] == "1"
+            return None
+    return None
+
+
 def parse_pressure_level(text: str | None) -> int | None:
     if not text or not text.strip().isdigit():
         return None
@@ -263,6 +281,9 @@ class Probes:
         available = parse_vm_stat(self._run(["vm_stat"]))
         pressure = PRESSURE_NAMES.get(level or 0, "unknown")
         return MemoryReading(pressure, level, available)
+
+    def low_power_mode(self) -> bool | None:
+        return parse_low_power_mode(self._run(["pmset", "-g"]))
 
     def total_memory_bytes(self) -> int | None:
         return parse_total_memory(self._run(["sysctl", "-n", "hw.memsize"]))
@@ -588,9 +609,25 @@ class ThermalGate:
             next_allowed = now + timedelta(seconds=cooldown)
         self._consecutive = consecutive
         self._next_allowed_at = next_allowed if cooldown > 0 else None
+        # Горячее состояние фиксируется сразу после рендера: снимок не должен
+        # показывать «допуск разрешён» между завершением job и следующим опросом.
+        blocked_reason = (
+            f"thermal_{thermal.state}"
+            if thermal.state in ("serious", "critical")
+            else None
+        )
         self._persist(
-            now, Decision(True, None, thermal=thermal, power=power, memory=memory),
-            thermal, power, memory,
+            now,
+            Decision(
+                blocked_reason is None,
+                blocked_reason,
+                thermal=thermal,
+                power=power,
+                memory=memory,
+            ),
+            thermal,
+            power,
+            memory,
         )
 
     # --- во время рендера ----------------------------------------------
@@ -640,6 +677,7 @@ class ThermalGate:
             "thermal_source": thermal.source,
             "power_source": power.source,
             "battery_percent": power.battery_percent,
+            "low_power_mode": self.probes.low_power_mode(),
             "memory_pressure": memory.pressure,
             "available_mb": available_mb,
             "min_available_mb": available_mb,
@@ -721,6 +759,7 @@ class ThermalGate:
                 if power is not None
                 else None
             ),
+            "low_power_mode": self.probes.low_power_mode(),
             "memory": (
                 {
                     "pressure": memory.pressure,

@@ -23,6 +23,7 @@ from app.api.shot_schemas import (
     ShotDetail,
     ShotReferenceCreate,
     ShotReferenceOut,
+    ShotRenderRequest,
     ShotSummary,
 )
 from app.models import (
@@ -406,6 +407,21 @@ def _require_attempt_artifact(session: Session, attempt: RenderAttempt) -> Artif
     return artifact
 
 
+def _is_preview_attempt(session: Session, attempt: RenderAttempt) -> bool:
+    """Preview-попытка (WP-THERMAL-03/T-07) не может стать финальным роликом.
+
+    Флаг пишется в `render_attempts.parameters` при claim и дублируется в payload
+    job, поэтому проверка не зависит от того, что прислал воркер.
+    """
+
+    if isinstance(attempt.parameters, dict) and attempt.parameters.get("preview"):
+        return True
+    if attempt.job_id is None:
+        return False
+    job = session.get(Job, attempt.job_id)
+    return bool(job is not None and (job.payload or {}).get("preview"))
+
+
 @router.post(
     "/shots/{shot_id}/attempts/{attempt_id}/approve", response_model=ShotSummary
 )
@@ -417,10 +433,15 @@ def approve_attempt(
     """Утверждает видео-попытку: единственный писатель `approved_attempt_id`.
 
     Не меняет стартовый кадр (S9): `start_keyframe_*` пишет только promote-keyframe.
+    Preview-попытку утвердить нельзя: она короче production и не является финалом.
     """
 
     shot = require_shot(session, shot_id)
     attempt = _require_video_attempt(session, shot, attempt_id)
+    if _is_preview_attempt(session, attempt):
+        raise HTTPException(
+            status_code=409, detail={"error": "preview_cannot_be_approved"}
+        )
     _require_attempt_artifact(session, attempt)
     project_id = shot_project_id(session, shot)
     if shot.approved_attempt_id == attempt.id and shot.status == "approved":
@@ -714,7 +735,14 @@ def _queued_out(job: Job, shot: Shot) -> RenderQueuedOut:
         status=job.status,
         shot_id=shot.id,
         start_keyframe_artifact_id=artifact_id,
+        preview=bool(payload.get("preview")),
     )
+
+
+# WP-THERMAL-03 (T-07): preview — короткая облегчённая попытка (73 кадра ≈ 3.04 с
+# при 24 fps) в том же разрешении, с тем же seed и workflow. Разрешение, FPS,
+# число кадров production-шота не меняются.
+PREVIEW_FRAMES = 73
 
 
 @router.post(
@@ -724,12 +752,14 @@ def _queued_out(job: Job, shot: Shot) -> RenderQueuedOut:
 )
 def queue_render(
     shot_id: uuid.UUID,
+    body: ShotRenderRequest | None = None,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: Session = Depends(get_session),
 ) -> RenderQueuedOut:
     shot = require_shot(session, shot_id)
     if shot.start_keyframe_artifact_id is None:
         raise HTTPException(status_code=409, detail="start keyframe is not approved")
+    preview = bool(body.preview) if body is not None else False
 
     key: str | None = None
     if idempotency_key is not None:
@@ -759,16 +789,20 @@ def queue_render(
             detail={"error": "render_already_active", "job_id": str(active.id)},
         )
 
+    job_payload: dict[str, object] = {
+        "shot_id": str(shot.id),
+        "start_keyframe_artifact_id": str(shot.start_keyframe_artifact_id),
+        "queued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if preview:
+        job_payload["preview"] = True
+        job_payload["frames"] = PREVIEW_FRAMES
     job = Job(
         kind="render_video",
         shot_id=shot.id,
         status="pending",
         idempotency_key=key,
-        payload={
-            "shot_id": str(shot.id),
-            "start_keyframe_artifact_id": str(shot.start_keyframe_artifact_id),
-            "queued_at": datetime.now(timezone.utc).isoformat(),
-        },
+        payload=job_payload,
     )
     session.add(job)
     try:

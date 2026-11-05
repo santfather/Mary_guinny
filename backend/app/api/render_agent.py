@@ -36,6 +36,9 @@ class ThermalOut(BaseModel):
 class PowerOut(BaseModel):
     source: str | None = None
     battery_percent: float | None = None
+    # WP-THERMAL-03 (T-06): только чтение `pmset -g`; `None` = Unknown,
+    # воркер не выдумывает выключенный режим.
+    low_power_mode: bool | None = None
 
 
 class MemoryOut(BaseModel):
@@ -175,6 +178,9 @@ def get_render_agent_status(
 
     thermal = state.get("thermal") if isinstance(state.get("thermal"), dict) else {}
     power = state.get("power") if isinstance(state.get("power"), dict) else {}
+    low_power_mode = state.get("low_power_mode")
+    if not isinstance(low_power_mode, bool):
+        low_power_mode = None
     memory = state.get("memory") if isinstance(state.get("memory"), dict) else {}
     available_bytes = memory.get("available_bytes")
     pause = state.get("pause") if isinstance(state.get("pause"), dict) else {}
@@ -202,6 +208,7 @@ def get_render_agent_status(
         power=PowerOut(
             source=power.get("source"),
             battery_percent=power.get("battery_percent"),
+            low_power_mode=low_power_mode,
         ),
         memory=MemoryOut(
             pressure=memory.get("pressure"),

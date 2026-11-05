@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import type { AttemptListItem, SceneSummary } from "../api/types";
-import { attemptMeta } from "../attemptMeta";
+import { attemptMeta, isPreviewAttempt } from "../attemptMeta";
 import { StateView } from "../components/StateView";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAsync } from "../hooks/useAsync";
@@ -27,10 +27,12 @@ const STATUS_OPTIONS = [
 
 /** Сравнивать можно только завершённые видео-попытки с артефактом. */
 function comparable(attempt: AttemptListItem): boolean {
+  // Preview-попытка — не кандидат в финальный ролик (WP-THERMAL-03/T-07).
   return (
     attempt.kind === "video" &&
     attempt.status === "completed" &&
-    attempt.artifact_content_url !== null
+    attempt.artifact_content_url !== null &&
+    !isPreviewAttempt(attempt)
   );
 }
 
@@ -237,6 +239,7 @@ export function AttemptsPage({ projectId }: { projectId: string }) {
                   />
                   <div className="list__meta">
                     <strong>Шот {attempt.shot_sequence_no}</strong>
+                    {isPreviewAttempt(attempt) && <span className="badge">preview</span>}
                     {attempt.approved && <span className="badge badge--ok">текущий дубль</span>}
                     {attempt.composition_revision !== null && (
                       <span className="muted">ревизия {attempt.composition_revision}</span>
@@ -254,14 +257,16 @@ export function AttemptsPage({ projectId }: { projectId: string }) {
                     </span>
                   )}
                   <div className="reference__actions">
-                    <button
-                      type="button"
-                      className="button button--small button--ok"
-                      disabled={busy !== null || attempt.approved}
-                      onClick={() => void makeCurrent(attempt)}
-                    >
-                      {attempt.approved ? "Текущий" : "Сделать текущей"}
-                    </button>
+                    {!isPreviewAttempt(attempt) && (
+                      <button
+                        type="button"
+                        className="button button--small button--ok"
+                        disabled={busy !== null || attempt.approved}
+                        onClick={() => void makeCurrent(attempt)}
+                      >
+                        {attempt.approved ? "Текущий" : "Сделать текущей"}
+                      </button>
+                    )}
                     <a className="button button--small" href={`#/shots/${attempt.shot_id}`}>
                       К шоту
                     </a>
@@ -332,6 +337,7 @@ export function AttemptsPage({ projectId }: { projectId: string }) {
                       )}
                       <span className="muted">{attempt.kind}</span>
                       <StatusBadge status={attempt.status} />
+                      {isPreviewAttempt(attempt) && <span className="badge">preview</span>}
                       {attempt.approved && (
                         <span className="badge badge--ok">утверждённый дубль</span>
                       )}

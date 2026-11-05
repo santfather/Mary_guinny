@@ -698,6 +698,36 @@ def test_job_loop_does_not_claim_while_blocked(monkeypatch) -> None:
     assert api.claims == 0
 
 
+def test_job_loop_stops_after_thermal_timeout(monkeypatch) -> None:
+    """WP-THERMAL-03: вне серии ожидание тоже не бесконечное."""
+
+    monkeypatch.setattr(ltx_worker, "notify", lambda *a, **k: None)
+    api = SeriesApi([])
+
+    code = ltx_worker._job_loop(
+        api, _series_args(once=True), ltx_worker.RenderSettings(), StubGate([False], stop=True)
+    )
+
+    assert code == 1
+    assert api.claims == 0
+
+
+def test_build_thermal_gate_prefers_render_settings_profile(tmp_path) -> None:
+    """T-06: профиль берётся из единого `RenderSettings`, а не из CLI-копии."""
+
+    args = _thermal_args(
+        thermal_profile="off",
+        thermal_state_file=str(tmp_path / "thermal.json"),
+        thermal_log=str(tmp_path / "events.jsonl"),
+        thermal_helper=str(tmp_path / "missing-helper"),
+        caffeinate=False,
+    )
+
+    gate = ltx_worker._build_thermal_gate(args, "eco")
+
+    assert gate.profile.name == "eco"
+
+
 def test_build_thermal_gate_off_disables_control() -> None:
     gate = ltx_worker._build_thermal_gate(_thermal_args(thermal_profile="off"))
 
@@ -858,4 +888,33 @@ def test_process_one_records_preset_provenance() -> None:
     complete = next(call[1] for call in api.calls if call[0] == "complete")
     assert complete["parameters"]["preset"] == "safe"
     assert complete["parameters"]["preset_source"] == "api"
+
+
+def test_process_one_marks_preview_in_provenance() -> None:
+    """T-07: preview-попытка отличается только флагом и числом кадров."""
+
+    api = StubApi()
+
+    ltx_worker.process_one(
+        api,
+        _job(preview=True, frames=73),
+        "ltx-1",
+        settings=ltx_worker.RenderSettings(),
+        comfy=FakeComfy(),
+    )
+
+    complete = next(call[1] for call in api.calls if call[0] == "complete")
+    assert complete["parameters"]["preview"] is True
+    assert complete["parameters"]["num_frames"] == 73
+
+
+def test_process_one_production_has_no_preview_flag() -> None:
+    api = StubApi()
+
+    ltx_worker.process_one(
+        api, _job(), "ltx-1", settings=ltx_worker.RenderSettings(), comfy=FakeComfy()
+    )
+
+    complete = next(call[1] for call in api.calls if call[0] == "complete")
+    assert "preview" not in complete["parameters"]
 

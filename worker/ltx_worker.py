@@ -86,6 +86,9 @@ class RenderSettings:
     # WP-M7: имя пресета и источник значений (`cli`/`api`/`default`) — в провенанс.
     preset: str | None = None
     preset_source: str = "default"
+    # WP-THERMAL-03: политика допуска задаётся профилем; здесь она фиксируется,
+    # чтобы рендер и thermal-гейт не расходились.
+    thermal_profile: str = "balanced"
     # default_factory, а не значение: путь разрешается при создании настроек.
     state_path: Path = field(default_factory=lambda: DEFAULT_STATE_FILE)
 
@@ -324,6 +327,9 @@ def _render(
         "preset": settings.preset,
         "preset_source": settings.preset_source,
     }
+    # WP-THERMAL-03 (T-07): preview — отдельная попытка, а не замена production.
+    if inputs.get("preview"):
+        parameters["preview"] = True
     if telemetry:
         parameters["thermal"] = dict(telemetry)
 
@@ -746,13 +752,15 @@ def _wait_for_admission(
         f"thermal: {decision.reason}; ждём {decision.wait_seconds:.0f} с",
         file=sys.stderr,
     )
-    if series and gate.should_stop_waiting():
+    if gate.should_stop_waiting():
+        reason = f"Термозащита ждёт слишком долго ({decision.reason})"
         notify(
             "Mary Studio: ожидание остановлено",
-            f"Термозащита ждёт слишком долго ({decision.reason}); прогон остаётся paused",
+            reason + ("; прогон остаётся paused" if series else ""),
         )
         print(
-            "thermal: превышено время ожидания — выхожу; прогон остаётся paused",
+            "thermal: превышено время ожидания — выхожу;"
+            + (" прогон остаётся paused" if series else " job не взят"),
             file=sys.stderr,
         )
         return True
@@ -776,7 +784,7 @@ def _job_loop(
         decision = gate.before_next()
         if not decision.allowed:
             if _wait_for_admission(gate, decision, args, series=False):
-                return 0
+                return 1 if gate.should_stop_waiting() else 0
             continue
         try:
             job = api.claim(args.name, lease_seconds=args.lease)
@@ -890,14 +898,17 @@ def _series_loop(
             return 0
 
 
-def _build_thermal_gate(args: argparse.Namespace) -> ThermalGate | NullGate:
+def _build_thermal_gate(
+    args: argparse.Namespace, profile: str | None = None
+) -> ThermalGate | NullGate:
     """Собирает thermal-контроль по CLI-флагам (Q-27…Q-33).
 
     Профиль выбирается только при запуске воркера: серверного API для смены
-    профиля нет, состояние в БД не пишется.
+    профиля нет, состояние в БД не пишется. `profile` позволяет передать
+    значение из `RenderSettings`, чтобы источник был один.
     """
 
-    profile = args.thermal_profile
+    profile = profile or args.thermal_profile
     helper = Path(args.thermal_helper)
     if args.build_thermal_helper:
         try:
@@ -1056,9 +1067,10 @@ def main(argv: list[str] | None = None) -> int:
         lease_seconds=args.lease,
         preset=choice.preset,
         preset_source=choice.source,
+        thermal_profile=args.thermal_profile,
         state_path=Path(args.state_file),
     )
-    gate = _build_thermal_gate(args)
+    gate = _build_thermal_gate(args, settings.thermal_profile)
     _recover_at_startup(api, args, settings)
     if args.series or args.series_run:
         return _series_loop(api, args, settings, gate)

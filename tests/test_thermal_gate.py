@@ -29,6 +29,7 @@ from thermal import (  # noqa: E402
     ThermalGate,
     ThermalReading,
     parse_power,
+    parse_low_power_mode,
     parse_pressure_level,
     parse_thermal,
     parse_vm_stat,
@@ -63,12 +64,14 @@ class StubProbes(Probes):
         power: PowerReading = AC,
         memory: MemoryReading = NORMAL,
         total: int = 16 * GIB,
+        low_power_mode: bool | None = False,
     ) -> None:
         super().__init__(helper=None)
         self.thermal_state = thermal_state
         self.power_reading = power
         self.memory_reading = memory
         self.total = total
+        self.low_power_reading = low_power_mode
 
     def thermal(self) -> ThermalReading:
         return ThermalReading(self.thermal_state, "process_info")
@@ -81,6 +84,10 @@ class StubProbes(Probes):
 
     def total_memory_bytes(self) -> int | None:
         return self.total
+
+    def low_power_mode(self) -> bool | None:
+        # WP-THERMAL-03: тестовый источник, реальный `pmset` в тестах не вызывается.
+        return self.low_power_reading
 
 
 def make_gate(
@@ -335,6 +342,39 @@ def test_power_pause_clears_when_power_returns(tmp_path: Path) -> None:
     assert gate.snapshot()["pause"]["active"] is False
 
 
+@pytest.mark.parametrize("state", ["serious", "critical"])
+def test_after_job_hot_state_blocks_snapshot_immediately(
+    tmp_path: Path, state: str
+) -> None:
+    """WP-THERMAL-03: между завершением горячего job и опросом нет «допуска»."""
+
+    probes = StubProbes()
+    gate = make_gate(tmp_path, probes=probes)
+    probes.thermal_state = state
+
+    gate.after_job(job_id="j1")
+
+    snapshot = gate.snapshot()
+    assert snapshot["admission"]["allowed"] is False
+    assert snapshot["admission"]["reason"] == f"thermal_{state}"
+    assert snapshot["pause"]["active"] is True
+    assert gate.before_next().allowed is False
+
+
+def test_after_job_nominal_keeps_admission_until_cooldown(tmp_path: Path) -> None:
+    clock = Clock()
+    gate = make_gate(tmp_path, probes=StubProbes(), clock=clock)
+
+    gate.after_job(job_id="j1")
+
+    snapshot = gate.snapshot()
+    assert snapshot["admission"]["allowed"] is True
+    assert snapshot["admission"]["reason"] is None
+
+    clock.advance(480)
+    assert gate.before_next().allowed
+
+
 def test_should_stop_waiting_after_max_wait(tmp_path: Path) -> None:
     clock = Clock()
     gate = make_gate(
@@ -396,6 +436,22 @@ def test_parse_memory_outputs() -> None:
     )
     assert parse_vm_stat(vm_stat) == (1000 + 2000 + 500) * 16384
     assert parse_vm_stat(None) is None
+
+
+def test_parse_low_power_mode_only_when_present() -> None:
+    """WP-THERMAL-03 (T-06): неизвестное значение — None, а не `False`."""
+
+    text = (
+        "System-wide power settings:\n"
+        "Currently in use:\n"
+        " lowpowermode         1\n"
+        " powernap             0\n"
+    )
+    assert parse_low_power_mode(text) is True
+    assert parse_low_power_mode(" lowpowermode         0\n") is False
+    assert parse_low_power_mode(" lowpowermode         maybe\n") is None
+    assert parse_low_power_mode("powernap 0\n") is None
+    assert parse_low_power_mode(None) is None
 
 
 # --- журнал и caffeinate -----------------------------------------------
@@ -479,6 +535,24 @@ def test_job_telemetry_and_sample(tmp_path: Path) -> None:
     assert telemetry["min_available_mb"] == 4 * 1024
     assert telemetry["peak_mem_mb"] == 12 * 1024
     assert telemetry["max_pressure_level"] == 2
+
+
+def test_low_power_mode_reaches_telemetry_and_state(tmp_path: Path) -> None:
+    """WP-THERMAL-03 (T-06): Low Power Mode виден в провенансе и снимке."""
+
+    probes = StubProbes(low_power_mode=True)
+    gate = make_gate(tmp_path, probes=probes)
+
+    assert gate.job_telemetry()["low_power_mode"] is True
+
+    gate.before_next()
+    state = json.loads((tmp_path / "thermal-state.json").read_text("utf-8"))
+    assert state["low_power_mode"] is True
+
+    probes.low_power_reading = None
+    gate.before_next()
+    state = json.loads((tmp_path / "thermal-state.json").read_text("utf-8"))
+    assert state["low_power_mode"] is None
 
 
 def test_snapshot_has_freshness_fields(tmp_path: Path) -> None:

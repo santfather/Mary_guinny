@@ -281,6 +281,14 @@ RENDER_PARAMETER_KEYS = (
     "aspect_ratio",
     "long_side",
     "shot_key",
+    # WP-THERMAL-03 (T-07): preview-попытка отличается от production только этим
+    # флагом и числом кадров; UI обязан показать метку.
+    "preview",
+    # WP-VOICE-02: Talking Preview — не LTX-рендер, а mouth-анимация.
+    "mode",
+    "frames",
+    "audio_asset_id",
+    "calibration_id",
 )
 
 
@@ -334,8 +342,19 @@ class AttemptPage(BaseModel):
     offset: int
 
 
+class ShotRenderRequest(BaseModel):
+    """Тело `POST /api/shots/{id}/render` (WP-THERMAL-03).
+
+    `preview=true` ставит облегчённую попытку: меньше кадров при том же
+    разрешении, seed и workflow. Production-параметры шота не меняются.
+    """
+
+    preview: bool = False
+
+
 class RenderQueuedOut(BaseModel):
     job_id: uuid.UUID
     status: str
     shot_id: uuid.UUID
     start_keyframe_artifact_id: uuid.UUID
+    preview: bool = False

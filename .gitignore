@@ -25,3 +25,4 @@ comfyui-input/**
 !comfyui-input/**/.gitkeep
 exports/*
 !exports/.gitkeep
+export/

@@ -100,12 +100,37 @@ def test_status_reads_fresh_state(status_client, tmp_path) -> None:
     assert body["profile"] == "eco"
     assert body["worker"] == "ltx-1"
     assert body["thermal"] == {"state": "fair", "source": "process_info"}
-    assert body["power"] == {"source": "ac", "battery_percent": 100}
+    assert body["power"] == {
+        "source": "ac",
+        "battery_percent": 100,
+        # WP-THERMAL-03: поля нет в state-файле → Unknown, а не `false`.
+        "low_power_mode": None,
+    }
     assert body["memory"]["available_mb"] == 8192
     assert body["pause"]["active"] is True
     assert body["pause"]["reason"] == "thermal_serious"
     assert body["batch"] == {"index": 2, "size": 3}
     assert body["age_seconds"] is not None and body["age_seconds"] < 5
+
+
+def test_status_reports_low_power_mode_only_as_bool(status_client, tmp_path) -> None:
+    """WP-THERMAL-03 (T-06): Low Power Mode — только чтение, без догадок."""
+
+    _write_state(
+        tmp_path / "thermal-state.json",
+        updated_at=datetime.now(timezone.utc),
+        low_power_mode=True,
+    )
+    body = status_client.get("/api/render-agent/status").json()
+    assert body["power"]["low_power_mode"] is True
+
+    _write_state(
+        tmp_path / "thermal-state.json",
+        updated_at=datetime.now(timezone.utc),
+        low_power_mode="yes",
+    )
+    body = status_client.get("/api/render-agent/status").json()
+    assert body["power"]["low_power_mode"] is None
 
 
 def test_status_marks_stale_state_and_keeps_last_reading(status_client, tmp_path) -> None:

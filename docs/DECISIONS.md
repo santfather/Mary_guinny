@@ -258,6 +258,36 @@ shot_compositions.source_plan_id → visual_scene_plans.id (nullable, ON DELETE 
 контрактом, а не только автоматически составленным текстовым prompt; при этом остаётся
 прослеживаемость и ручное подтверждение.
 
+### 3.9. S20. Калибровка области рта (WP-VOICE-02)
+
+Решение принято человеком 2026-11-04 вместе с разрешением на WP-VOICE-02 и миграцию
+`0011_mouth_calibrations`.
+
+```text
+mouth_calibrations
+  id, project_id, shot_id,
+  reference_asset_id → reference_assets.id (nullable),
+  keyframe_artifact_id → artifacts.id (nullable),
+  x, y, width, height, rotation, max_open, sensitivity, smoothing,
+  created_at, updated_at
+  CHECK ровно один источник: reference_asset_id XOR keyframe_artifact_id
+  CHECK область в кадре: x >= 0, y >= 0, width > 0, height > 0,
+        x + width <= 1, y + height <= 1
+  CHECK rotation -180…180, max_open (0…1], sensitivity (0…5], smoothing [0…1)
+  UNIQUE INDEX (shot_id, reference_asset_id) WHERE reference_asset_id IS NOT NULL
+  UNIQUE INDEX (shot_id, keyframe_artifact_id) WHERE keyframe_artifact_id IS NOT NULL
+```
+
+Правила:
+
+1. Калибровка — изменяемая запись, а не артефакт: одна строка на пару «шот, источник»,
+   повторный `POST` обновляет её (upsert), история калибровок не ведётся.
+2. Калибровка не меняет approved-референс и артефакт стартового кадра: S15 не ослаблен,
+   approved-записи только читаются.
+3. Источник калибровки обязан принадлежать шоту: референс — быть привязанным через
+   `shot_references`, keyframe — быть keyframe-попыткой этого шота.
+4. Калибровка не создаёт jobs, очередей, storage и новых артефактов.
+
 ---
 
 ## 4. Утверждённые изменения API (A1–A6)
@@ -725,6 +755,279 @@ production-параметры рендера не меняются.
 
 ---
 
+### 4.17. Стабилизация thermal-защиты и preview-first (WP-THERMAL-03)
+
+Основание: WP-THERMAL-03 «Stabilization, Thermal Validation & Production Readiness»,
+`docs/OPEN_QUESTIONS.md` Q-32…Q-34, `docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md` §8–§13,
+`docs/PROPOSALS/THERMAL_RENDER_AUDIT.md`. Схема БД, миграции, пресеты и
+production-параметры рендера не меняются. Реальные GPU-прогоны в этом WP не выполнялись,
+кроме одного контролируемого Eco acceptance теста NLB-25 по разрешению Q-41 (п.10).
+
+1. **T-06, профиль в настройках рендера.** `RenderSettings` получил поле
+   `thermal_profile` (по умолчанию `balanced`); значение приходит из CLI
+   `--thermal-profile` / env `MARY_THERMAL_PROFILE` и передаётся в `_build_thermal_gate`
+   явно, а не читается из `args` в момент сборки. Профиль по-прежнему управляет только
+   допуском, паузами и cooldown; `long_side`, `num_frames`, `fps`, `seed`, `cfg_scale`
+   и workflow не меняются. Профиля `Performance` в коде нет.
+2. **Low Power Mode — только чтение.** `pmset -g` парсится в `low_power_mode: bool | None`
+   (`parse_low_power_mode`); отсутствие источника или нераспознанное значение → `None`
+   (Unknown). Поле аддитивно добавлено в `power` ответа `GET /api/render-agent/status`,
+   в `render_attempts.parameters.thermal.low_power_mode` и в `thermal-state.json`.
+   Глобальные настройки macOS не изменяются, `pmset` не вызывается с записью.
+3. **Горячее состояние фиксируется сразу после job.** `ThermalGate.after_job` пишет
+   снимок с `admission.allowed=false` и `reason=thermal_<serious|critical>`, если
+   измерение после рендера уже горячее; пауза взводится в том же вызове. Раньше снимок
+   до следующего опроса мог содержать `allowed=true`, и UI показывал ложный допуск.
+4. **Ожидание thermal-допуска ограничено.** `--thermal-max-wait` (по умолчанию 6 ч)
+   прекращает молчаливое ожидание: `_wait_for_admission` возвращает управление,
+   `_job_loop` завершается с кодом 1, причина печатается и отправляется баннером.
+   Это не завершает и не отменяет активный рендер.
+5. **T-07, preview-first.** `POST /api/shots/{id}/render` принимает необязательное тело
+   `{"preview": true}` (схема `ShotRenderRequest`); при preview в payload job пишутся
+   `preview=true` и `frames=73` (`PREVIEW_FRAMES`), в `RenderAttempt.parameters` —
+   `preview=true`, в ответе `RenderQueuedOut` — `preview`. Preview — отдельная
+   `RenderAttempt` с `kind='video'`, она не заменяет production-артефакт и не меняет
+   утверждённый стартовый кадр, seed, разрешение и workflow. 73 кадра (3.04 с при 24 fps)
+   выбраны вместо проектных 41–49 как уже проверенная в WP-00A конфигурация.
+6. **Preview нельзя утвердить автоматически или вручную.** `POST /api/shots/{id}/attempts/
+   {attempt_id}/approve` для preview-попытки возвращает 409 `preview_cannot_be_approved`;
+   `reject` остаётся доступным. UI показывает бейдж `preview` и не предлагает approve и
+   «Сделать текущей» (в том числе в сравнении попыток).
+7. **UI-панель «Термозащита».** На `#/series/{id}` показываются энергопрофиль, thermal
+   state, источник питания, Low Power Mode, memory pressure, партия, очередь, допуск,
+   cooldown, время до следующего задания и причина блокировки — в том числе вне паузы.
+   Неизвестные значения выводятся как `Unknown`, прочерк `—` не используется; температура,
+   мощность GPU и процент загрузки не синтезируются. Значения причин человекочитаемы
+   (`thermal_serious` → «перегрев (Serious)»), неизвестная причина показывается как есть.
+8. **Проверка UI.** Панель проверена на живом backend с временным снимком состояния
+   (`MARY_RENDER_AGENT_STATE_PATH`/`MARY_RENDER_AGENT_EVENTS_PATH` указывали на `/tmp`,
+   production-файлы `~/.mary-studio/*` не перезаписывались). В acceptance-прогоне
+   долгоживущий воркер не смог писать production state/log из-за sandbox, поэтому
+   `/api/render-agent/status` во время рендера отдавал `worker_online=false`;
+   телеметрия сохранилась в `render_attempts.parameters`.
+9. **Границы.** Новых миграций, эндпоинтов статуса, очередей, моделей и зависимостей нет.
+   `export/` добавлен в `.gitignore` (≈241 МБ MP4 не отслеживаются, файлы не удалялись и
+   не перемещались). `launchd` не устанавливается: предложение — раздел 9 в
+   `docs/REPORTS/WP_THERMAL_03_REPORT.md`.
+10. **Acceptance-прогон (2026-11-04).** Один Eco-рендер NLB-25 (`safe` 576×1024/193/24,
+    seed `950087778`) и тест Thermal Pause (`thermal_serious` → `paused` → `resume` →
+    `completed`) прошли; production-параметры и approved-записи не менялись.
+    `peak_mem_mb=16295`, `min_available_mb=2137`, `max_pressure_level=4` — гейт проверяет
+    память только до job, это зафиксированный риск. Cooldown 480 с выставляется, но
+    live-проверка допуска после рендера дала `power_not_ac` (ноутбук был на батарее).
+    Детали — `docs/REPORTS/WP_THERMAL_03_TEST_RESULTS.md` §5 и
+    `docs/PROPOSALS/THERMAL_GPU_ACCEPTANCE_PLAN.md` §8. Решение о серии из 30 роликов
+    этим пунктом не принимается.
+
+### 4.18. Talking Character MVP: `mouth_animation_mvp` (WP-VOICE-02)
+
+Основание: WP-VOICE-02 «Universal Audio Import & Talking Character MVP»,
+`docs/PROPOSALS/WP_VOICE_02_MOUTH_ANIMATION.md`. Готовые записи пользователя,
+без TTS, ElevenLabs, облачных API, LTX и ComfyUI. GPU не используется.
+
+1. **Режим и честность названия.** Новый режим — `mouth_animation_mvp`
+   (`parameters.mode`). Это приблизительная анимация рта по громкости, **не**
+   phoneme-accurate lip sync; ограничение записывается в
+   `parameters.limitation` и показывается в UI. Существующий lip sync API сохранён:
+   `backend/app/lipsync.py` по-прежнему `SELECTED_ENGINE = None`, фиктивный ML-движок
+   не подставляется.
+2. **Источник кадра — только approved-изображение.** Либо approved-референс,
+   привязанный к шоту, либо утверждённый стартовый кадр (`shots.start_keyframe_*`).
+   Калибровка и генерация не меняют approved-референс, артефакт и стартовый кадр.
+3. **Video Talking — Not Supported.** Надёжного tracking морды в проекте нет, поэтому
+   видео-источник отклоняется кодом `video_talking_not_supported`; статичная маска на
+   движущееся видео не накладывается, тяжёлые tracking-модели не устанавливаются.
+   UI показывает режим как `Not Supported` и предлагает image-режим.
+4. **Движок.** Чистый Python + Pillow, без новых зависимостей. Кривая раскрытия:
+   RMS-огибающая 50 Гц → окно кадра → порог тишины 6 % от пика → `sensitivity` →
+   однополюсный attack/release с разными коэффициентами → deadband 0.03 →
+   `max_open`. В тишине раскрытие ровно 0, случайных движений нет; одинаковые вход и
+   калибровка дают одинаковые кадры и MP4-структуру. Кадр с закрытым ртом — точная
+   копия источника.
+5. **Сборка результата.** FFmpeg: h264 (`yuv420p`) + исходная запись как `aac`,
+   `-shortest`, `+faststart`, 24 fps (`mouth_animation_fps`), длинная сторона ≤ 1080
+   (`mouth_animation_max_side`), чётные стороны для `yuv420p`. Исходная запись и
+   изображение только читаются.
+6. **Контракт без миграции.** Генерация синхронная и локальная, но результат проходит
+   штатный жизненный цикл: `Job(kind='mouth_animation', status='completed')` +
+   `RenderAttempt(kind='video', parameters.mode='mouth_animation_mvp')` +
+   `Artifact(source='attempt', kind='talking_preview', mime='video/mp4')`. `jobs.kind`
+   не имеет CHECK, новых таблиц jobs нет; guard одного активного рендера относится только
+   к `kind='render_video'`, GPU-воркер выбирает `kinds` явно и эту job не увидит.
+7. **Review — только человек.** Talking Preview — обычная завершённая видео-попытка:
+   approve/reject идут существующими `POST /api/shots/{id}/attempts/{attempt_id}/
+   approve|reject`, `approved_attempt_id` пишет только они. Автоматического утверждения
+   нет; стартовый кадр и approved-записи не меняются.
+8. **Блокировки вместо пустого MP4.** `POST /api/shots/{id}/mouth-animation` возвращает
+   типизированные 409: `audio_required`, `audio_not_approved`, `source_image_required`,
+   `source_reference_not_approved`, `reference_not_linked`, `video_talking_not_supported`,
+   `calibration_required`, `calibration_source_mismatch`, `mouth_region_out_of_bounds`.
+   При отсутствии записи/кадра/калибровки попытка, job и MP4 не создаются.
+9. **Калибровка.** Хранится в `mouth_calibrations` (S20), одна запись на пару «шот,
+   источник»; предпросмотр закрытого/открытого рта — PNG без записи в БД
+   (`Cache-Control: no-store`). Параметры: X/Y/W/H (доли кадра), rotation, max_open,
+   sensitivity, smoothing.
+10. **UI.** В Shot Editor — панель «Озвучка»: Import Audio, Audio Library, play, select,
+    Approve Audio, Calibrate Mouth с оверлеем области, предпросмотр закрытого/открытого
+    рта, waveform, Talking Preview и результат со ссылкой на существующий блок «Попытки».
+    Пока запись не выбрана и не утверждена, кнопка генерации заблокирована с понятной
+    причиной.
+11. **Границы.** LTX, ComfyUI, TTS, облачные API и тяжёлые ML-модели не используются;
+    NLB не изменялся; commit/push не выполнялись.
+
+### 4.19. Импорт и подготовка готового аудио шота (WP-VOICE-02)
+
+Основание — то же, что §4.18. Новых таблиц и второго storage нет.
+
+1. **Хранение.** Запись — `reference_assets(kind='uploaded', role='shot_audio')`,
+   привязка к шоту — `shot_references(purpose='other')`. Дедуп по
+   `UNIQUE(project_id, sha256)`. Approve/reject — существующие эндпоинты
+   `POST /api/reference-assets/{id}/approve|reject`; «выбранная» запись — самая свежая
+   approved. Замена записи — approve новой; старая остаётся в библиотеке (S15).
+2. **Приём файла.** `POST /api/shots/{id}/audio`: WAV, MP3, M4A, AAC по `Content-Type`
+   (список в `AUDIO_MIME_SUFFIX`), лимит `shot_audio_upload_max_bytes` (32 МиБ) и
+   `shot_audio_max_duration_s` (120 с), необязательные `X-Content-SHA256` и
+   `X-Original-Name`. Размер ограничивается до чтения тела (`read_body_with_limit` → 413).
+3. **Подготовка.** Реальный формат определяется `ffprobe`, а не расширением: должен быть
+   аудиопоток и положительная длительность. Оригинал кладётся в content-addressed storage
+   побайтно без изменений; рядом создаётся рабочая копия PCM16 48 кГц mono. Автоматической
+   нормализации с потерей динамики нет.
+4. **Метаданные.** `duration_s`, `sample_rate`, `channels`, `codec`, `format_name`,
+   `original_name`, `work_storage_key`, `work_sha256`, `work_sample_rate`,
+   `work_channels`, `envelope_rate_hz`, `envelope` (50 Гц), `gate`, `peak_rms`,
+   `speech_segments`, `silence_segments`, `speech_ratio`.
+5. **Чтение.** `GET /api/shots/{id}/audio` — библиотека с флагом `selected`;
+   `GET /api/shots/{id}/audio/{asset_id}/waveform?buckets=16…2000` — пики из metadata,
+   при их отсутствии — пересчёт из рабочей копии.
+6. **Идемпотентность.** Повторная загрузка того же файла в тот же проект возвращает
+   существующий ассет (200) и при необходимости создаёт недостающую привязку к шоту;
+   тот же sha256 с другой ролью — 409 `duplicate_reference`.
+7. **Границы.** Новых очередей и pipeline нет; запись не запускает рендер и не меняет
+   шот. Тестовые записи в рабочем проекте не создаются.
+
+### 4.20. Движок рта v2: закрытие в паузах и мягкая маска (WP-VOICE-04)
+
+Основание: WP-VOICE-03 (первый живой Talking Preview, `docs/REPORTS/WP_VOICE_03_REPORT.md`,
+дефекты 1–5) и решение человека «фиксировать как есть, идти дальше». Контракт API,
+таблицы и очередь не меняются; S20 не затрагивается.
+
+1. **Версии.** `parameters.engine = "pillow_mouth_v2"`,
+   `workflow_version = "mouth_animation_mvp_v2"`; режим остаётся `mouth_animation_mvp`.
+   Старые попытки и MP4 не перезаписываются и не пересчитываются.
+2. **Кривая.** В дополнение к §4.18 п.4: непрерывная тишина ≥ 0.08 с
+   (`SILENCE_CLOSE_S`) закрывает рот принудительно (`openness = 0`), release
+   ускорен (`max(0.08, base·(1 − 0.35·smoothing))`). Короткие паузы 0.12–0.2 с
+   больше не оставляют приоткрытый рот.
+3. **Маска.** Верх скруглённого прямоугольника фиксирован на линии рта (центр
+   области), раскрытие идёт вниз; высота `rh·(0.10 + 0.55·norm)`, ширина `0.9·rw`,
+   радиус скругления `0.4·min(w,h)`; край размывается (feather `0.12·open_height`),
+   плотность `0.45 + 0.55·norm`. Глаза и нос не затрагиваются, если область задана
+   корректно.
+4. **Длительность и метаданные.** Вместо `-shortest` — `-af apad` и `-t` по длине
+   кривой: хвост записи не срезается; `parameters.frames` берётся из фактической
+   длительности MP4 (ffprobe), а не из длины кривой.
+5. **Калибровка.** Геометрия GNS-05 обновляется существующим upsert
+   `POST /api/shots/{id}/mouth-calibrations` (тот же `id`, без миграций); approved-
+   изображение и стартовый кадр не меняются.
+6. **Review.** Автоматического утверждения нет; новый Preview — обычная видео-попытка.
+7. **Границы.** LTX, ComfyUI, GPU, TTS и облачные API не используются; миграций нет;
+   NLB не изменялся; commit/push не выполнялись.
+
+---
+
+### 4.21. Фотографические viseme-кадры: `viseme_frame_blend_v1` (WP-VOICE-06)
+
+Основание: WP-VOICE-05 (`docs/PROPOSALS/LIPSYNC_ENGINE_EVALUATION.md`, отказ от
+pixel-level генеративного lip sync в пользу готовых кадров морды) и задание
+WP-VOICE-06 Revised. Миграций нет: набор хранится в существующих таблицах.
+
+1. **Хранение набора.** Пять `reference_assets(kind='uploaded', role='viseme_<state>')`,
+   привязанных к шоту через `shot_references(purpose='other')`; `closed` может быть
+   неявно взят из approved-источника (`reference_asset_id` или keyframe-артефакт).
+   `metadata_json` содержит `viseme_set=true` и `viseme_state`; статус нового кадра —
+   `draft`, `approved` ставит только человек. Approved-источник не перезаписывается.
+2. **Импорт.** `POST /api/shots/{id}/viseme-set/{state}` (сырое тело, PNG/JPEG,
+   ≤ 32 МиБ) и `GET /api/shots/{id}/viseme-set` (отчёт), `GET …/viseme-set/preview`
+   (PNG-лист сравнения). Дедуп по `sha256` в проекте: тот же файл в другой роли →
+   409 `duplicate_reference`.
+3. **Проверка совместимости** (`backend/app/viseme_assets.py`, PIL без numpy):
+   разрешение, сдвиг головы (поиск по сетке ±8 px вне области морды с порогом
+   улучшения 0.5), изменения вне морды ≤ 1 %, `closed` совпадает с источником ≤ 1 %,
+   заметная артикуляция ≥ 0.5 %, риск мерцания между вариантами ≤ 1 %. Блокеры:
+   `viseme_set_incomplete`, `viseme_set_not_approved`, `viseme_resolution_mismatch`,
+   `viseme_head_shift`, `viseme_outside_mouth_changes`, `viseme_closed_mismatch`,
+   `viseme_no_articulation`, `viseme_flicker_risk`.
+4. **Движок `viseme_frame_blend_v1`** (`backend/app/viseme_blend.py`): кадр не
+   рисуется маской — патч области морды берётся из реальных изображений набора;
+   остальные пиксели — из approved-источника. Переходы: сглаживание весов с
+   постоянной времени `blend_ms` (по умолчанию 60 мс), на кадре не более двух
+   изображений; виземы короче `min_hold_ms` (60 мс) отбрасываются; паузы из
+   `shot_audio` закрывают рот. FFmpeg: h264 `veryfast`/`crf 20`, `yuv420p`,
+   AAC 192k, `apad` + `-t`, `+faststart`; результат обязан пройти `probe_mp4`
+   с аудиодорожкой.
+5. **Генерация.** `POST /api/shots/{id}/mouth-animation` с
+   `engine='viseme_frame_blend_v1'`; при неготовом наборе — 409 `viseme_set_blocked`
+   с `missing`/`blockers` **до** создания Job/RenderAttempt. Тайминги: `timing` в теле
+   (`timing_source='payload'`) либо `use_rhubarb`; без них — 409
+   `viseme_timing_required`; невалидные — 422 `viseme_timing_invalid`. Результат —
+   обычная видео-попытка (`workflow_version='viseme_frame_blend_v1'`), review и
+   `approve` — существующими эндпоинтами; автоутверждения нет.
+6. **Rhubarb 1.14.0 — только опциональный адаптер.** `backend/app/rhubarb.py`
+   проверяет наличие бинарника, бит исполнения, каталог `res/` рядом с ним,
+   архитектуру (`file -b`) и SHA-256 из `MARY_RHUBARB_SHA256`; при пустой настройке —
+   `rhubarb_sha256_not_pinned`. Официальная сборка macOS v1.14.0 — `x86_64`
+   (arm64-релиза у проекта нет): `arm64` принимается как есть, `x86_64` — только при
+   доступной Rosetta 2, с `rosetta: true` и пометкой
+   `notes[code='rhubarb_runs_under_rosetta']`; SHA-256 остаётся обязательным и строгим.
+   Вход — только `.wav`/`.ogg` (`rhubarb_input_unsupported` иначе), временный JSON
+   пишется вне `storage/`. Read-only `GET /api/rhubarb/status`
+   (`download_performed=false`). Скачивание, установка и любые сетевые запросы
+   не выполняются без отдельного разрешения.
+7. **Legacy.** `mouth_animation_mvp` / `pillow_mouth_v2` сохранён без изменения
+   поведения и выбирается по умолчанию; старые попытки и MP4 не перезаписываются.
+8. **Границы.** Схема БД, очередь и enum-ы не менялись; LTX, ComfyUI, GPU и TTS не
+   использовались; NLB не изменялся; commit/push не выполнялись.
+
+---
+
+### 4.22. Заморозка экспериментальной анимации рта и статус lip sync (WP-STABILIZE-01)
+
+Основание: решения владельца D1–D4 от 2026-11-05, `docs/REPORTS/WP_VOICE_06_REPORT.md`
+§10/§12 и аудит `docs/AUDITS/PROJECT_AUDIT_2026_11.md`. Миграций нет, approved-записи
+и история попыток не переписываются.
+
+1. **Сборка B отклонена как производственный результат.** Попытка
+   `3eb3ca9f…` (artifact `a5326a3f…`, `workflow_version='viseme_frame_blend_v1'`)
+   не принята: видна прямоугольная граница патча, освещение viseme-кадров не совпадает
+   с `closed.png`. Видео, `render_attempts` и артефакт сохраняются как история A/B;
+   `reject_attempt` не вызывался, статус в БД не переписывался, approved
+   viseme-референсы и калибровки не менялись.
+2. **Статус движков.** `mouth_animation_mvp`, `pillow_mouth_v2` и
+   `viseme_frame_blend_v1` — **experimental**. Код, API, тесты, калибровки и UI
+   сохраняются; скрытие панелей и смена режима по умолчанию — только Stage 2
+   отдельного work package.
+3. **Rhubarb 1.14.0** — диагностический источник таймингов, не автоматический
+   production-процесс: запуск остаётся явным (`use_rhubarb`), сетевые запросы и
+   скачивание запрещены без отдельного разрешения.
+4. **Lip sync недоступен.** `SELECTED_ENGINE = None`; `POST /api/shots/{id}/lipsync`
+   отвечает 409 `lipsync_engine_not_selected`, job не создаётся. Выбор движка —
+   отдельное решение с оценкой лицензии и качества.
+5. **Аудиоинфраструктура остаётся production-компонентом:** импорт готового аудио
+   (`reference_assets(role='shot_audio')`, рабочая PCM 48 кГц mono, огибающая,
+   waveform), `projects.audio_artifact_id`, таймлайн и производственный план.
+   Заморозка анимации рта её не затрагивает.
+6. **Возобновление экспериментов** — отдельный WP с визуальными критериями приёмки
+   (отсутствие шва и прямоугольной границы, постоянство освещения, сохранение
+   идентичности, измеримая артикуляция, отсутствие мерцания).
+7. **Отмена одной job.** В контракте API нет эндпоинта отмены отдельной job —
+   существует только `POST /api/series/{run_id}/cancel` для прогона серии. Отмена
+   `pending`-job без lease выполняется операционным изменением статуса строки на
+   `cancelled` в транзакции с guard-условиями (id + kind + status + attempts=0 +
+   `lease_owner IS NULL`); новый эндпоинт требует отдельного утверждения и в этом WP
+   не создавался.
+
+---
+
 ## 5. Дополнительные утверждённые решения (D1–D8)
 
 | ID | Решение | Следствие для реализации |
@@ -765,7 +1068,14 @@ production-параметры рендера не меняются.
 | API | A: `POST /api/shots/{id}/lipsync` (WP-M8) | Новый эндпоинт; всегда 409, пока движок не выбран; БД и очередь не затрагиваются |
 | Worker API | C: guard в `POST /api/worker/claim`, `series/next` → `busy` (WP-THERMAL-02) | Схема БД и миграции не меняются; claim `render_video` может вернуть `null` при чужом активном рендере |
 | API | A: read-only `GET /api/render-agent/status` (WP-THERMAL-02) | Только чтение снимка воркера, журнала и очереди; управления очередью нет |
+| API | A: необязательное тело `{"preview": true}` у `POST /api/shots/{id}/render`, поле `preview` в ответе; approve preview → 409 (WP-THERMAL-03) | Вызовы без тела и старые попытки читаются как раньше; схема БД не меняется |
+| API | A: `power.low_power_mode: bool \| null` в `GET /api/render-agent/status` (WP-THERMAL-03) | Аддитивное поле; `null` = Unknown, глобальные настройки macOS не читаются с записью |
+| `render_attempts.parameters` | Новые ключи `preview` и `thermal.low_power_mode` (WP-THERMAL-03) | JSONB без миграции; старые попытки не переписываются |
 | Runtime | Локальные файлы воркера `~/.mary-studio/thermal-{state.json,events.jsonl}` (WP-THERMAL-02) | Вне БД и Git; формат фиксирован, журнал с ротацией; имена событий `events` не расширяются |
+| `mouth_calibrations` | A: новая таблица (S20, WP-VOICE-02) | Калибровка необязательна; approved-референсы и стартовые кадры не меняются |
+| `reference_assets` | `role='shot_audio'` и `metadata.envelope`/`work_storage_key` без миграции (WP-VOICE-02) | Существующие CHECK и S15 не меняются; рабочая PCM-копия — отдельный blob в том же storage |
+| `jobs.kind` | Новое значение `mouth_animation` без миграции (WP-VOICE-02) | CHECK у колонки нет; GPU-воркер по-прежнему выбирает только перечисленные `kinds` |
+| API | A: `POST/GET /api/shots/{id}/audio`, `…/audio/{asset_id}/waveform`, `POST/GET /api/shots/{id}/mouth-calibrations`, `…/preview`, `POST /api/shots/{id}/mouth-animation` (WP-VOICE-02) | Новые эндпоинты; существующий lip sync API (`SELECTED_ENGINE=None`) и его ответы не меняются |
 
 **Правило:** baseline v1.3 не редактируется. Любое расхождение фиксируется здесь и в
 `docs/ROADMAP_MARY_STUDIO.md`.
@@ -782,8 +1092,7 @@ production-параметры рендера не меняются.
 | Remote и состав первого коммита | WP-00B |
 | Обязательность `scenes.episode_id` после backfill | WP-03 |
 | UI-стек | WP-04 (сначала API/OpenAPI) |
-| `launchd`-агент для воркера (Q-31) | отдельный этап после WP-THERMAL-02 |
-| Preview-first: `parameters.preview=true`, число кадров и согласие на снижение качества (Q-34) | отдельный WP preview-first |
+| `launchd`-агент для воркера (Q-31) | отдельный этап; предложение — `docs/REPORTS/WP_THERMAL_03_REPORT.md` §9 |
 | `low_ram`, энергетические профили Performance и замеры (Q-33, Q-38) | после энергетического теста |
 
 ---
@@ -811,3 +1120,9 @@ production-параметры рендера не меняются.
 | 2026-11-04 | §4.14: пресеты рендера под оборудование (WP-M7) — только измеренные `safe`/`wide`/`legacy_512` с флагами `measured`, детект Apple Silicon и памяти через `sysctl`/`vm_stat` без новых зависимостей, read-only `GET /api/presets`, приоритет «CLI > API > default» в воркере, `preset`/`preset_source` в `render_attempts.parameters`; миграций нет |
 | 2026-11-04 | §4.15: интерфейс lip sync без движка (WP-M8) — `backend/app/lipsync.py` (`SELECTED_ENGINE = None`, коды `lipsync_engine_not_selected`/`_not_implemented`), `POST /api/shots/{id}/lipsync` → 409 без записей в БД и без job, UI-панель за `VITE_FEATURE_LIPSYNC`; legacy-заглушки `pipeline/stages/*` не тронуты, миграций нет |
 | 2026-11-04 | §4.16: thermal-safe планировщик (WP-THERMAL-02) — Q-27 Swift-helper `ProcessInfo.thermalState` с fallback `unknown`; Q-28 атомарный guard одного `render_video` в `claim` (`pg_advisory_xact_lock` + `NOT EXISTS`), `series_next` → `busy`; Q-29 read-only `GET /api/render-agent/status` со свежестью данных; Q-30 сеть + normal memory pressure + 4 ГиБ, батарея только с ≥ 50 % и `--allow-battery`, пауза вместо завершения; Q-31 `caffeinate -i -w`, `launchd` отдельно; Q-32 профиль только при старте; Q-33 Eco не меняет production-параметры, `low_ram` — после Q-38; Q-34 preview через `parameters.preview=true` (реализация — отдельный WP); Q-35 JSONL с ротацией; миграций нет |
+| 2026-11-04 | §4.17: стабилизация thermal-защиты и preview-first (WP-THERMAL-03) — `RenderSettings.thermal_profile`, Low Power Mode только чтение (`pmset -g` → `power.low_power_mode`, telemetry, state-файл), снимок `allowed=false` сразу после горячей job, ограниченное ожидание `--thermal-max-wait` (код 1), preview через тело `{"preview": true}` (73 кадра, `parameters.preview=true`, approve → 409), UI-панель с `Unknown` вместо прочерков и причиной блокировки вне паузы, `export/` в `.gitignore`; миграций нет |
+| 2026-11-04 | S20: `mouth_calibrations` (WP-VOICE-02) — калибровка области рта, ровно один источник (approved-референс XOR keyframe), CHECK области и параметров, частичные уникальные индексы на пару «шот, источник»; approved-записи не меняются |
+| 2026-11-04 | §4.18: Talking Character MVP `mouth_animation_mvp` (WP-VOICE-02) — приблизительная анимация рта по RMS (не phoneme-accurate), image-режим из approved-кадра и стартового кадра, Video Talking `Not Supported`, локальный движок Pillow + FFmpeg без GPU/TTS, результат — `Job(kind='mouth_animation')` + видео-попытка + артефакт `talking_preview` без миграции, review только человеком, типизированные 409 без пустого MP4 |
+| 2026-11-04 | §4.19: импорт и подготовка готового аудио шота (WP-VOICE-02) — `reference_assets(role='shot_audio')` + `shot_references(purpose='other')`, `POST/GET /api/shots/{id}/audio` и waveform, лимиты 32 МиБ/120 с, ffprobe, оригинал без изменений + рабочая PCM 48 кГц mono, огибающая 50 Гц и речевые участки; новых таблиц и storage нет |
+| 2026-11-04 | §4.20: движок рта v2 (WP-VOICE-04) — `engine='pillow_mouth_v2'`, `workflow_version='mouth_animation_mvp_v2'`, принудительное закрытие после 0.08 с тишины, ускоренный release, раскрытие вниз от линии рта, feather-край, `apad`/`-t` вместо `-shortest`, `frames` из ffprobe; upsert калибровки без миграций |
+| 2026-11-05 | §4.22: заморозка анимации рта и статус lip sync (WP-STABILIZE-01) — сборка B (`viseme_frame_blend_v1`) отклонена как производственный результат без переписывания БД, все три движка рта переведены в experimental, Rhubarb — только диагностический источник таймингов, lip sync остаётся unavailable (`SELECTED_ENGINE = None`), аудиоинфраструктура остаётся production; зафиксировано отсутствие эндпоинта отмены отдельной job |

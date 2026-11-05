@@ -235,6 +235,19 @@ before_next():
   состояние и подсказывает включить вручную для Eco. Автоматическое переключение
   запрещено (задание, этап 4).
 
+**Фактическое состояние (2026-11-04, WP-THERMAL-02/03):**
+
+- реализованы профили `off` / `balanced` / `eco`; профиля `Performance` в коде **нет**
+  (таблица выше — проектное предложение, а не реализация);
+- `low_ram` в Eco **не включается**: строка `low_ram=true` в таблице не реализована,
+  условие — энергетический тест Q-38 (`DECISIONS.md` §4.16 п.7);
+- чтение Low Power Mode добавлено в WP-THERMAL-03: `pmset -g` → `low_power_mode`
+  в `GET /api/render-agent/status`, в `render_attempts.parameters.thermal` и в
+  `thermal-state.json`; `null` = Unknown. Глобальные настройки macOS не меняются;
+- профиль передаётся в рендер через `RenderSettings.thermal_profile` (CLI `--thermal-profile`
+  → `MARY_THERMAL_PROFILE` → `balanced`), сам профиль меняет только допуск, паузы и
+  cooldown; разрешение, `num_frames`, FPS, seed, cfg и workflow не меняются.
+
 ---
 
 ## 9. UI (Render Agent)
@@ -280,6 +293,18 @@ UI (на `#/series/{id}` и на `#/shots`):
 Запрещено: показывать «температуру» или «% мощности GPU», если источник её не даёт;
 Unknown отображается как Unknown.
 
+**Фактическая реализация (WP-THERMAL-02/03).** Скетч выше — проект; реализован
+контракт с другим составом полей (`docs/DECISIONS.md` §4.16 п.3, §4.17 п.3):
+`worker_online`, `stale`/`age_seconds`/`updated_at`, `profile`, `rendering`,
+`current_job_id`, `thermal{state,source}`, `power{source,battery_percent,low_power_mode}`,
+`memory{pressure,pressure_level,available_mb}`, `admission{allowed,reason,wait_seconds}`,
+`cooldown{next_allowed_at,remaining_seconds}`, `pause{active,reason,since,waited_seconds}`,
+`batch{index,size}`, `queue{active_render_jobs,pending_render_jobs,current_run_id,current_run_status}`,
+`last_events[]`. Выбора профиля в UI нет (write-API не вводился, Q-32); панель на
+`#/series/{id}` показывает профиль, thermal state, питание, Low Power Mode, память,
+партию, очередь, допуск, cooldown, время до следующего задания и причину блокировки,
+неизвестные значения — `Unknown`.
+
 ---
 
 ## 10. Preview-first (этап 6)
@@ -295,6 +320,20 @@ Unknown отображается как Unknown.
   **не** обещает побитово идентичный результат даже при том же seed.
 - Для production всегда используется утверждённый стартовый кадр и утверждённый
   motion-промпт; preview не имеет права их менять.
+
+**Фактическая реализация (WP-THERMAL-03, `DECISIONS.md` §4.17 п.4).** Отклонения от
+проекта:
+
+- число кадров preview — **73** (3.04 с при 24 fps), а не 41–49: 73 — уже проверенная
+  конфигурация WP-00A (`512×512/73/24`), и она даёт предсказуемую длину;
+- превью **нельзя утвердить**: `POST /api/shots/{id}/attempts/{id}/approve` для
+  preview-попытки возвращает 409 `preview_cannot_be_approved` (проект предполагал
+  approve существующим эндпоинтом);
+- тела запроса `{"preview": true}` у `POST /api/shots/{id}/render` достаточно; в job
+  payload уходят `preview=true` и `frames=73`, в `RenderAttempt.parameters` — `preview=true`,
+  в ответе — `preview`;
+- production-рендер и `shots.approved_attempt_id` не затрагиваются; UI показывает бейдж
+  `preview` и скрывает approve/«Сделать текущей» для таких попыток.
 
 ---
 
@@ -339,19 +378,20 @@ Unit (новый `tests/test_thermal_scheduler.py`, `tests/test_ltx_worker.py` �
 
 ## 12. Минимальный план реализации
 
-| Шаг | Содержание | Миграции/API |
-|---|---|---|
-| T-02 | `worker/thermal.py`: `ThermalSource`, `MemoryProbe`, `PowerProbe`, state-файл, журнал; gate `before_next`/`after_job`; CLI/env | нет |
-| T-03 | Интеграция gate в `_series_loop`/`_job_loop`/`_render`; Thermal Pause через существующие `pause`/`resume`; уведомления | нет |
-| T-04 | Телеметрия: `peak_mem_mb`, `parameters["thermal"]`, `render_seconds`; heartbeat раз в 30 с | нет |
-| T-05 | Эндпоинт статуса + UI-панель Render Agent | +1 read-only эндпоинт (утвердить) |
-| T-06 | Energy profiles в `RenderSettings` + Eco/Low Power Mode (только чтение) | нет |
-| T-07 | Preview-first: параметры preview, запись `parameters.preview` | нет |
-| T-08 | Серверный guard «один активный render_video» (F-01) — по решению человека | поведение `series/next`, без схемы |
-| T-09 | Опциональный Swift-helper `ProcessInfo.thermalState` (сборка в `scripts/`) | нет зависимостей |
+| Шаг | Содержание | Миграции/API | Статус |
+|---|---|---|---|
+| T-02 | `worker/thermal.py`: `ThermalSource`, `MemoryProbe`, `PowerProbe`, state-файл, журнал; gate `before_next`/`after_job`; CLI/env | нет | Выполнен (WP-THERMAL-02) |
+| T-03 | Интеграция gate в `_series_loop`/`_job_loop`/`_render`; Thermal Pause через существующие `pause`/`resume`; уведомления | нет | Выполнен (WP-THERMAL-02) |
+| T-04 | Телеметрия: `peak_mem_mb`, `parameters["thermal"]`, `render_seconds`; heartbeat раз в 30 с | нет | Выполнен (WP-THERMAL-02) |
+| T-05 | Эндпоинт статуса + UI-панель Render Agent | +1 read-only эндпоинт (утвердить) | Выполнен (WP-THERMAL-02; панель расширена в WP-THERMAL-03) |
+| T-06 | Energy profiles в `RenderSettings` + Eco/Low Power Mode (только чтение) | нет | Выполнен (WP-THERMAL-03) |
+| T-07 | Preview-first: параметры preview, запись `parameters.preview` | нет | Выполнен (WP-THERMAL-03, 73 кадра, approve → 409) |
+| T-08 | Серверный guard «один активный render_video» (F-01) — по решению человека | поведение `series/next`, без схемы | Выполнен (WP-THERMAL-02) |
+| T-09 | Опциональный Swift-helper `ProcessInfo.thermalState` (сборка в `scripts/`) | нет зависимостей | Выполнен (WP-THERMAL-02) |
 
 Порядок обязательный: T-02 → T-03 → T-04 → T-05; профили и preview — после того, как
-guard работает и измеряется.
+guard работает и измеряется. Все шаги закрыты; ни один живой GPU-прогон под Eco
+не выполнялся — это отдельный acceptance test (`docs/PROPOSALS/THERMAL_GPU_ACCEPTANCE_PLAN.md`).
 
 ---
 
@@ -368,8 +408,8 @@ guard работает и измеряется.
    останавливает прогон с уведомлением.
 6. Ручные `pause`/`cancel`/`stop-after-current` работают как раньше; планировщик не
    снимает чужую паузу.
-7. Существующие тесты не ослаблены: backend 231 passed, корень 57 passed,
-   `alembic check` чист, `npm run build` ✓.
+7. Существующие тесты не ослаблены: backend 245 passed, корень 104 passed,
+   `alembic check` чист, `npm run build` ✓ (факт на 2026-11-04, WP-THERMAL-03).
 8. Все автоматические решения планировщика присутствуют в журнале и в
    `render_attempts.parameters.thermal`.
 

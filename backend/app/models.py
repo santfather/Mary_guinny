@@ -10,6 +10,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Double,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -905,3 +906,78 @@ class ProductionPlan(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class MouthCalibration(TimestampMixin, Base):
+    """Калибровка области рта для `mouth_animation_mvp` (WP-VOICE-02, §4.18).
+
+    Координаты нормализованы (0…1) относительно источника. Ровно один источник:
+    approved-референс персонажа или стартовый кадр шота. Сами approved-записи
+    не меняются — здесь только ссылки на них.
+    """
+
+    __tablename__ = "mouth_calibrations"
+    __table_args__ = (
+        CheckConstraint(
+            "(reference_asset_id IS NOT NULL)::int"
+            " + (keyframe_artifact_id IS NOT NULL)::int = 1",
+            name="ck_mouth_calibrations_single_source",
+        ),
+        CheckConstraint(
+            "x >= 0 AND y >= 0 AND width > 0 AND height > 0"
+            " AND x + width <= 1 AND y + height <= 1",
+            name="ck_mouth_calibrations_region",
+        ),
+        CheckConstraint(
+            "rotation >= -180 AND rotation <= 180",
+            name="ck_mouth_calibrations_rotation",
+        ),
+        CheckConstraint(
+            "max_open > 0 AND max_open <= 1", name="ck_mouth_calibrations_max_open"
+        ),
+        CheckConstraint(
+            "sensitivity > 0 AND sensitivity <= 5",
+            name="ck_mouth_calibrations_sensitivity",
+        ),
+        CheckConstraint(
+            "smoothing >= 0 AND smoothing < 1", name="ck_mouth_calibrations_smoothing"
+        ),
+        Index(
+            "uq_mouth_calibrations_shot_reference",
+            "shot_id",
+            "reference_asset_id",
+            unique=True,
+            postgresql_where=text("reference_asset_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_mouth_calibrations_shot_keyframe",
+            "shot_id",
+            "keyframe_artifact_id",
+            unique=True,
+            postgresql_where=text("keyframe_artifact_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False
+    )
+    shot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("shots.id"), nullable=False
+    )
+    reference_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("reference_assets.id")
+    )
+    keyframe_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("artifacts.id")
+    )
+    x: Mapped[float] = mapped_column(Double, nullable=False)
+    y: Mapped[float] = mapped_column(Double, nullable=False)
+    width: Mapped[float] = mapped_column(Double, nullable=False)
+    height: Mapped[float] = mapped_column(Double, nullable=False)
+    rotation: Mapped[float] = mapped_column(Double, nullable=False, server_default="0")
+    max_open: Mapped[float] = mapped_column(Double, nullable=False, server_default="0.8")
+    sensitivity: Mapped[float] = mapped_column(
+        Double, nullable=False, server_default="1.0"
+    )
+    smoothing: Mapped[float] = mapped_column(Double, nullable=False, server_default="0.5")

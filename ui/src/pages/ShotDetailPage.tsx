@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
-import { attemptMeta } from "../attemptMeta";
+import { attemptMeta, isPreviewAttempt } from "../attemptMeta";
 import type {
   Composition,
   CompositionRender,
@@ -12,6 +12,7 @@ import type {
 import { CompositionEditor } from "../components/CompositionEditor";
 import { CompositionPreview } from "../components/CompositionPreview";
 import { JobProgress } from "../components/JobProgress";
+import { MouthAnimationPanel } from "../components/MouthAnimationPanel";
 import { ReferencePicker } from "../components/ReferencePicker";
 import { ScenePlanPanel } from "../components/ScenePlanPanel";
 import { ShotReferences } from "../components/ShotReferences";
@@ -147,11 +148,15 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
     );
   }
 
-  function queueRender(): void {
-    void run("queue", () => api.renderShot(shot.id), (result) => {
+  function queueRender(preview = false): void {
+    void run("queue", () => api.renderShot(shot.id, preview), (result) => {
       const queued = result as { job_id: string };
       setQueuedJobId(queued.job_id);
-      setNotice(`Рендер поставлен в очередь: job ${queued.job_id}`);
+      setNotice(
+        preview
+          ? `Preview поставлен в очередь: job ${queued.job_id} (73 кадра)`
+          : `Рендер поставлен в очередь: job ${queued.job_id}`,
+      );
     });
   }
 
@@ -234,9 +239,18 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                 type="button"
                 className="button button--small button--ok"
                 disabled={busy !== null || shot.start_keyframe_artifact_id === null}
-                onClick={queueRender}
+                onClick={() => queueRender()}
               >
                 {busy === "queue" ? "…" : "Запустить рендер"}
+              </button>
+              <button
+                type="button"
+                className="button button--small"
+                disabled={busy !== null || shot.start_keyframe_artifact_id === null}
+                onClick={() => queueRender(true)}
+                title="73 кадра при том же разрешении, seed и workflow"
+              >
+                Preview (73 кадра)
               </button>
             </div>
             {shot.start_keyframe_artifact_id === null && (
@@ -264,6 +278,8 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
         assets={imageAssets}
         onChanged={references.reload}
       />
+
+      <MouthAnimationPanel shot={shot} onChanged={onReload} />
 
       <ScenePlanPanel shotId={shot.id} assets={availableAssets} onChanged={onReload} />
 
@@ -381,6 +397,7 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
             {shot.attempts.map((attempt) => {
               const meta = attemptMeta(attempt);
               const isVideo = attempt.kind === "video";
+              const preview = isPreviewAttempt(attempt);
               const reviewable = isVideo && attempt.status === "completed";
               const approved = shot.approved_attempt_id === attempt.id;
               return (
@@ -404,6 +421,7 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                     <div className="list__meta">
                       <strong>{attempt.kind}</strong>
                       <StatusBadge status={attempt.status} />
+                      {preview && <span className="badge">preview</span>}
                       {approved && <span className="badge badge--ok">утверждённый дубль</span>}
                       {attempt.composition_revision !== null && (
                         <span className="muted">ревизия {attempt.composition_revision}</span>
@@ -429,14 +447,16 @@ function ShotDetailBody({ shot, onReload }: { shot: ShotDetail; onReload: () => 
                   </div>
                   {reviewable && (
                     <div className="list__actions">
-                      <button
-                        type="button"
-                        className="button button--small button--ok"
-                        disabled={busy !== null || (approved && shot.status === "approved")}
-                        onClick={() => reviewAttempt(attempt.id, "approve")}
-                      >
-                        {approved && shot.status === "approved" ? "Утверждено" : "Утвердить"}
-                      </button>
+                      {!preview && (
+                        <button
+                          type="button"
+                          className="button button--small button--ok"
+                          disabled={busy !== null || (approved && shot.status === "approved")}
+                          onClick={() => reviewAttempt(attempt.id, "approve")}
+                        >
+                          {approved && shot.status === "approved" ? "Утверждено" : "Утвердить"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="button button--small button--danger"

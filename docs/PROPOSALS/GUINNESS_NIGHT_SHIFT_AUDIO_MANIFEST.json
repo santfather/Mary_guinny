@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0",
+  "project": "Guinness: Night Shift",
+  "project_id": "f5846f96-994c-4737-8c3a-7f356d93bf10",
+  "prepared_at": "2026-11-04",
+  "source_of_truth": "docs/PROPOSALS/GUINNESS_NIGHT_SHIFT_AUDIO_PLAN.md",
+  "voice_status": "pending_recording",
+  "rights_status": "pending",
+  "no_fake_artifacts": true,
+  "notes": [
+    "Ни одного WAV не записано и не сгенерировано: файлы отсутствуют в репозитории (проверено).",
+    "Записи не создавались в БД: фиктивных audio artifacts нет.",
+    "TTS и внешние сервисы не используются.",
+    "Клонирование голоса без письменного согласия не выполняется."
+  ],
+  "delivery_requirements": {
+    "format": "wav",
+    "sample_rate_hz": 48000,
+    "channels": 2,
+    "bit_depth": 16,
+    "codec": "pcm_s16le",
+    "integrated_loudness_lufs": -18.0,
+    "true_peak_dbtp_max": -1.5,
+    "headroom_db": 6,
+    "noise_floor_dbfs_max": -55,
+    "speech_language": "ru",
+    "rights_evidence": "письменное согласие исполнителя на использование записи и голоса (вне репозитория), поле rights_evidence заполняется человеком"
+  },
+  "per_shot_master": {
+    "clip_duration_s": 8.0417,
+    "clip_count": 5,
+    "master_duration_s": 40.2083,
+    "subtitles": "docs/PROPOSALS/GUINNESS_NIGHT_SHIFT_SUBTITLES.srt",
+    "mix_command": "ffmpeg -y -i gns_XX_dialogue.wav -i gns_XX_ambience.wav -i gns_XX_sfx.wav -i gns_XX_music.wav -filter_complex \"[0:a]volume=1.0[d];[1:a]volume=0.35[a];[2:a]volume=0.8[s];[3:a]volume=0.30[m];[d][a][s][m]amix=inputs=4:duration=longest:normalize=0,loudnorm=I=-16:LRA=11:TP=-1.5\" -ar 48000 -ac 2 -c:a pcm_s16le gns_XX_mix.wav",
+    "verify_command": "ffprobe -v error -show_entries stream=codec_name,sample_rate,channels,duration -of default=noprint_wrappers=1 gns_XX_dialogue.wav",
+    "loudness_command": "ffmpeg -hide_banner -nostats -i gns_XX_dialogue.wav -af loudnorm=I=-18:TP=-1.5:LRA=11:print_format=json -f null -"
+  },
+  "dialogue": [
+    {
+      "shot_key": "GNS-01",
+      "shot_id": "f5e2c81d-1952-403f-9ebf-30d0d77087bd",
+      "title": "Когда хозяева уснули",
+      "text_ru": "Люди уснули. Начинается моя смена",
+      "window_s": [1.2, 4.3],
+      "target_duration_s": 3.1,
+      "expected_wav": "audio/gns/gns_01_dialogue.wav",
+      "wav_present": false,
+      "voice_status": "pending_recording",
+      "rights_status": "pending",
+      "sha256": null,
+      "duration_s": null,
+      "lip_sync": "BLOCKED"
+    },
+    {
+      "shot_key": "GNS-02",
+      "shot_id": "3b82fed6-af17-4546-88b2-3e5fa8644202",
+      "title": "Первое задание",
+      "text_ru": "Проверка гравитации. Успешно",
+      "window_s": [2.9, 5.2],
+      "target_duration_s": 2.3,
+      "expected_wav": "audio/gns/gns_02_dialogue.wav",
+      "wav_present": false,
+      "voice_status": "pending_recording",
+      "rights_status": "pending",
+      "sha256": null,
+      "duration_s": null,
+      "lip_sync": "BLOCKED"
+    },
+    {
+      "shot_key": "GNS-03",
+      "shot_id": "8f681a53-c535-4010-946c-74a8cb4ceccc",
+      "title": "Ночной патруль",
+      "text_ru": "Подозрительный шум. Это был я",
+      "window_s": [2.6, 5.0],
+      "target_duration_s": 2.4,
+      "expected_wav": "audio/gns/gns_03_dialogue.wav",
+      "wav_present": false,
+      "voice_status": "pending_recording",
+      "rights_status": "pending",
+      "sha256": null,
+      "duration_s": null,
+      "lip_sync": "BLOCKED"
+    },
+    {
+      "shot_key": "GNS-04",
+      "shot_id": "58d01a81-4e92-4cf4-83a4-b12077a3c61a",
+      "title": "Научный эксперимент",
+      "text_ru": "А если вот так?..",
+      "window_s": [1.5, 3.5],
+      "target_duration_s": 2.0,
+      "expected_wav": "audio/gns/gns_04_dialogue.wav",
+      "wav_present": false,
+      "voice_status": "pending_recording",
+      "rights_status": "pending",
+      "sha256": null,
+      "duration_s": null,
+      "lip_sync": "BLOCKED"
+    },
+    {
+      "shot_key": "GNS-05",
+      "shot_id": "6532e96d-1358-4d30-94ed-a88dc2e14607",
+      "title": "Король дивана",
+      "text_ru": "Рабочий день окончен. Кормить меня!",
+      "window_s": [1.0, 3.9],
+      "target_duration_s": 2.9,
+      "expected_wav": "audio/gns/gns_05_dialogue.wav",
+      "wav_present": false,
+      "voice_status": "pending_recording",
+      "rights_status": "pending",
+      "sha256": null,
+      "duration_s": null,
+      "lip_sync": "BLOCKED"
+    }
+  ],
+  "video_audio_track": {
+    "source": "LTX-2.3 MLX generate_audio",
+    "codec": "aac",
+    "sample_rate_hz": 48000,
+    "channels": 2,
+    "contains_dialogue": false,
+    "usage": "черновой ambience, приглушается или заглушается при сведении"
+  },
+  "music_brief": {
+    "title_ru": "Ночная смена Гиннесса",
+    "status": "BLOCKED",
+    "blocker": "нет генератора музыки; права на существующий MP3 NLB не подтверждены",
+    "duration_target_s": 40.21,
+    "form": [
+      {"shot_key": "GNS-01", "section": "intro", "duration_s": 8.042},
+      {"shot_key": "GNS-02", "section": "A", "duration_s": 8.042},
+      {"shot_key": "GNS-03", "section": "B", "duration_s": 8.042},
+      {"shot_key": "GNS-04", "section": "question", "duration_s": 8.042},
+      {"shot_key": "GNS-05", "section": "coda", "duration_s": 8.042}
+    ],
+    "tempo_bpm": [84, 92],
+    "feel": "свинг 8-е, «крадущаяся» походка",
+    "instrumentation": [
+      "контрабас pizzicato walking",
+      "приглушённое пиано (Rhodes/felt)",
+      "щётки по тарелке",
+      "редкий кларнет или вибрафон как комедийный акцент"
+    ],
+    "dynamic": "−18 LUFS под речью, до −14 LUFS в паузах, без ударных дропов",
+    "master": "интегрированная −16 LUFS, true peak ≤ −1.5 dBTP",
+    "rights": "только оригинал или трек с подтверждённой лицензией; внешние сервисы без разрешения запрещены",
+    "forbidden_source": "projects.audio_artifact_id = 67af1e71… (NLB MP3, права не подтверждены)"
+  },
+  "lip_sync": [
+    {
+      "shot_key": "GNS-01",
+      "shot_id": "f5e2c81d-1952-403f-9ebf-30d0d77087bd",
+      "status": "BLOCKED",
+      "engine": null,
+      "reference_image": {
+        "asset_id": "16940715-f022-4b02-af77-3f61c0162511",
+        "role": "gns_01_start",
+        "sha256": "997b5986b1b61aa3566d35471fb5aeaf9dc89aea750eed7b780fc86f729216bd",
+        "size": [392, 657]
+      },
+      "dialogue_text_ru": "Люди уснули. Начинается моя смена",
+      "expected_wav": "audio/gns/gns_01_dialogue.wav",
+      "speech_window_s": [1.2, 4.3],
+      "target_duration_s": 3.1,
+      "target_frames": 193,
+      "target_fps": 24,
+      "target_resolution": [576, 1024],
+      "technical_requirements": {
+        "audio_format": "wav 48 kHz stereo pcm_s16le",
+        "sync_alignment": "начало речи = 1.200 с от первого кадра (29 кадров)",
+        "mouth_region": "морда кота в нижней трети кадра, крупность средняя",
+        "output": "изменённый видеофайл без изменения тайминга и разрешения",
+        "must_preserve": "идентичность, окрас, освещение, фон, число лап"
+      }
+    },
+    {
+      "shot_key": "GNS-05",
+      "shot_id": "6532e96d-1358-4d30-94ed-a88dc2e14607",
+      "status": "BLOCKED",
+      "engine": null,
+      "reference_image": {
+        "asset_id": "6fa6064c-05c3-46d0-8c60-bff5e89f333e",
+        "role": "gns_05_start",
+        "sha256": "e197e3ec60dbcadad92a710d7afbca0501365a867c2c85663a68d846451dbfc9",
+        "size": [941, 1672]
+      },
+      "dialogue_text_ru": "Рабочий день окончен. Кормить меня!",
+      "expected_wav": "audio/gns/gns_05_dialogue.wav",
+      "speech_window_s": [1.0, 3.9],
+      "target_duration_s": 2.9,
+      "target_frames": 193,
+      "target_fps": 24,
+      "target_resolution": [576, 1024],
+      "technical_requirements": {
+        "audio_format": "wav 48 kHz stereo pcm_s16le",
+        "sync_alignment": "начало речи = 1.000 с от первого кадра (24 кадра)",
+        "mouth_region": "морда кота в верхней половине кадра, голова уже поднята",
+        "output": "изменённый видеофайл без изменения тайминга и разрешения",
+        "must_preserve": "идентичность, окрас, велюровый диван, тёплый свет лампы, число лап"
+      }
+    }
+  ]
+}

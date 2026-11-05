@@ -167,7 +167,81 @@ export function SeriesRunPage({ runId }: { runId: string }) {
   );
 }
 
-/** Read-only состояние thermal-контроля (WP-THERMAL-02, Q-29). */
+/** Read-only состояние thermal-контроля (WP-THERMAL-02, Q-29; WP-THERMAL-03). */
+const PROFILE_LABELS: Record<string, string> = {
+  eco: "Eco",
+  balanced: "Balanced",
+  off: "Off",
+};
+
+const THERMAL_LABELS: Record<string, string> = {
+  nominal: "Nominal",
+  fair: "Fair",
+  serious: "Serious",
+  critical: "Critical",
+  unknown: "Unknown",
+};
+
+const POWER_LABELS: Record<string, string> = {
+  ac: "сеть",
+  battery: "батарея",
+  unknown: "Unknown",
+};
+
+const PRESSURE_LABELS: Record<string, string> = {
+  normal: "Normal",
+  warning: "Warning",
+  critical: "Critical",
+  unknown: "Unknown",
+};
+
+function label(map: Record<string, string>, value: string | null | undefined): string {
+  // Неизвестное значение — Unknown, а не пустая строка и не догадка.
+  if (value === null || value === undefined || value === "") return "Unknown";
+  return map[value] ?? value;
+}
+
+function humanWait(seconds: number | null): string {
+  if (seconds === null || seconds <= 0) return "сейчас";
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes} мин`;
+  return `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+}
+
+/** Причины блокировки из `worker/thermal.py`; неизвестная причина показывается как есть. */
+const REASON_LABELS: Record<string, string> = {
+  guard_disabled: "защита выключена",
+  thermal_nominal: "thermal: Nominal",
+  thermal_fair: "thermal: Fair",
+  thermal_serious: "перегрев (Serious)",
+  thermal_critical: "критический перегрев (Critical)",
+  thermal_unknown: "thermal: Unknown",
+  thermal_recovery: "ждём восстановления thermal",
+  power_not_ac: "нет питания от сети",
+  power_unknown: "источник питания неизвестен",
+  battery_low: "низкий заряд батареи",
+  memory_pressure_critical: "критическое давление на память",
+  memory_pressure_warning: "повышенное давление на память",
+  memory_low: "мало свободной памяти",
+  cooldown: "cooldown между шотами",
+  job_failed: "job завершилась ошибкой",
+};
+
+function lowPowerLabel(value: boolean | null): string {
+  if (value === null) return "Unknown";
+  return value ? "включён" : "выключен";
+}
+
+function admissionLabel(allowed: boolean | null): string {
+  if (allowed === null) return "Unknown";
+  return allowed ? "разрешён" : "заблокирован";
+}
+
+function labelBlockReason(reason: string | null | undefined): string {
+  if (reason === null || reason === undefined || reason === "") return "Unknown";
+  return REASON_LABELS[reason] ?? reason;
+}
+
 function RenderAgentPanel() {
   const [status, setStatus] = useState<RenderAgentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -216,32 +290,53 @@ function RenderAgentPanel() {
       {status !== null && (
         <>
           <p className="muted">
-            Профиль: {status.profile ?? "—"} · thermal: {status.thermal.state} (
-            {status.thermal.source})
+            Профиль: {label(PROFILE_LABELS, status.profile)} · thermal:{" "}
+            {label(THERMAL_LABELS, status.thermal.state)} ({status.thermal.source})
             {status.stale && status.updated_at !== null && " · данные устарели"}
           </p>
           <p className="muted">
-            Питание: {status.power.source ?? "—"}
+            Питание: {label(POWER_LABELS, status.power.source)}
             {status.power.battery_percent !== null &&
               ` · заряд ${status.power.battery_percent}%`}{" "}
-            · память: {status.memory.pressure ?? "—"}
+            · Low Power Mode: {lowPowerLabel(status.power.low_power_mode)}
+          </p>
+          <p className="muted">
+            Память: {label(PRESSURE_LABELS, status.memory.pressure)}
             {status.memory.available_mb !== null &&
               ` · свободно ${status.memory.available_mb} МБ`}
           </p>
           <p className="muted">
             Партия: {status.batch.index ?? 0}/{status.batch.size ?? 0} · очередь:{" "}
             {status.queue.active_render_jobs} активно, {status.queue.pending_render_jobs} ждёт
+            {status.rendering && ` · рендер идёт (${status.current_job_id ?? "job"})`}
           </p>
-          {status.pause.active && (
+          <p className="muted">
+            Допуск: {admissionLabel(status.admission.allowed)} · до следующего задания:{" "}
+            {humanWait(status.admission.wait_seconds ?? status.cooldown.remaining_seconds)}
+          </p>
+          {status.pause.active ? (
             <p className="alert">
-              Пауза термозащиты: {status.pause.reason ?? "—"}
+              Пауза термозащиты: {labelBlockReason(status.pause.reason)}
+              {status.pause.since !== null && ` · с ${status.pause.since}`}
+              {status.pause.waited_seconds !== null &&
+                ` · ожидание ${humanWait(status.pause.waited_seconds)}`}
               {status.cooldown.remaining_seconds !== null &&
-                ` · до следующего шота ${Math.ceil(status.cooldown.remaining_seconds / 60)} мин`}
+                ` · до следующего шота ${humanWait(status.cooldown.remaining_seconds)}`}
             </p>
+          ) : (
+            status.admission.allowed === false && (
+              <p className="alert">
+                Следующее задание заблокировано: {labelBlockReason(status.admission.reason)}
+                {status.queue.pending_render_jobs > 0 &&
+                  ` · в очереди ${status.queue.pending_render_jobs}`}
+              </p>
+            )
           )}
           {lastEvent !== null && (
             <p className="muted">
-              Последнее событие: {lastEvent.reason ?? lastEvent.event ?? "—"}
+              Последнее событие: {lastEvent.event ?? "Unknown"}
+              {lastEvent.reason !== null && ` · ${labelBlockReason(lastEvent.reason)}`}
+              {lastEvent.ts !== null && ` · ${lastEvent.ts}`}
             </p>
           )}
         </>

@@ -303,7 +303,66 @@
   Решение — `docs/DECISIONS.md` §4.16. Схема БД не менялась; новые
   `tests/test_thermal_gate.py` — 33 теста, `backend/tests/test_render_agent_status.py` —
   5 тестов, в `tests/test_ltx_worker.py` +5.
-- Тесты: legacy — 15 passed; backend — 239 passed; `tests/test_ltx_worker.py` — 35 passed;
-  `tests/test_thermal_gate.py` — 33 passed; `tests/test_ltx_adapter.py` — 12 passed;
-  корневой `python -m pytest tests` — 95 passed;
-  `alembic check` — no new operations (после `0010_audio_timeline_plans`); UI — `npm run build`.
+- WP-THERMAL-03 выполнен: `RenderSettings.thermal_profile`, Low Power Mode только чтение
+  (`pmset -g` → `power.low_power_mode` в статусе, телеметрии и state-файле), снимок
+  `allowed=false` сразу после горячей job, ограниченное ожидание `--thermal-max-wait`
+  (код 1), preview-first (`{"preview": true}`, 73 кадра, `parameters.preview=true`,
+  approve → 409 `preview_cannot_be_approved`, UI-бейдж), панель «Термозащита» с
+  `Unknown` вместо прочерков и причиной блокировки вне паузы, `export/` в `.gitignore`.
+  Решение — `docs/DECISIONS.md` §4.17. Миграций нет.
+- Acceptance test WP-THERMAL-03 выполнен (Q-41, 2026-11-04): один Eco-рендер NLB-25
+  (`safe` 576×1024/193/24, seed `950087778`, MP4 h264/aac 8.04 с, `peak_mem_mb=16295`)
+  и тест Thermal Pause (`thermal_serious` → `paused` → `resume` → `completed`, job во
+  время паузы не создавался, повторного `/prompt` нет). `~/.mary-studio/*` воркеру
+  недоступны из sandbox — телеметрия в `render_attempts.parameters`. Факты —
+  `docs/REPORTS/WP_THERMAL_03_REPORT.md` §11.2, `docs/PROPOSALS/THERMAL_GPU_ACCEPTANCE_PLAN.md` §8.
+- WP-VOICE-02 выполнен: Universal Audio Import & Talking Character MVP — миграция
+  `0011_mouth_calibrations` (S20), импорт готовых WAV/MP3/M4A/AAC
+  (`reference_assets(role='shot_audio')` + рабочая PCM 48 кГц mono + огибающая 50 Гц),
+  локальный движок `mouth_animation_mvp` (Pillow + FFmpeg, без GPU/TTS), калибровка рта,
+  Video Talking — Not Supported, UI-панель «Озвучка»; отчёт —
+  `docs/REPORTS/WP_VOICE_02_REPORT.md`.
+- WP-VOICE-03 выполнен (статус «частично»): первый живой Talking Preview GNS-05 из записи
+  `Lana 6-4.mp3` (attempt `25fd45f5-…`, artifact `6f02c5d1-…`, h264+aac 608×1080/24 fps);
+  визуальная приёмка не пройдена — область рта накрывала правый глаз и нос; человек
+  решил зафиксировать результат как есть. Отчёт — `docs/REPORTS/WP_VOICE_03_REPORT.md`.
+- WP-VOICE-04 выполнен: движок `pillow_mouth_v2` / `mouth_animation_mvp_v2` —
+  принудительное закрытие рта после 0.08 с тишины, ускоренный release, плоский верх
+  маски на линии губ с раскрытием вниз, feather-край, `apad`/`-t` вместо `-shortest`,
+  `frames` из ffprobe; калибровка GNS-05 переставлена на линию рта
+  (`x=0.62, y=0.446, w=0.06, h=0.04`, тот же `id`), новый Preview `3324624c-…` /
+  artifact `bb96c6a0-…` (h264+aac 608×1080, 285 кадров, 11.875 с) не утверждён.
+  Решение — `docs/DECISIONS.md` §4.20; отчёт — `docs/REPORTS/WP_VOICE_04_REPORT.md`.
+  Миграций нет.
+- WP-VOICE-06 выполнен (архитектура и проверка набора): движок `viseme_frame_blend_v1`
+  (`backend/app/viseme_blend.py`) собирает кадр из пяти реальных изображений морды
+  (`closed`/`small_open`/`medium_open`/`wide_open`/`rounded`) — маска рта не рисуется;
+  набор хранится в `reference_assets(role='viseme_<state>')` без миграций, импорт
+  `POST /api/shots/{id}/viseme-set/{state}`, отчёт `GET …/viseme-set` и PNG-лист
+  `GET …/viseme-set/preview`; проверка совместимости (разрешение, сдвиг головы ≤ 8 px,
+  изменения вне морды ≤ 1 %, `closed` ≤ 1 %, артикуляция ≥ 0.5 %, мерцание ≤ 1 %)
+  блокирует генерацию 409 `viseme_set_blocked` до создания Job/Attempt; Rhubarb 1.14.0
+  — опциональный источник таймингов: бинарник установлен вручную с разрешения человека
+  в `~/.mary-studio/tools/rhubarb-1.14.0/`, SHA-256 запинен по бинарнику
+  (`93fa4a16…`, `MARY_RHUBARB_SHA256`), сборка macOS только `x86_64` — принимается
+  через Rosetta 2 (`rosetta: true`, `notes`), вход `.wav`/`.ogg`;
+  `GET /api/rhubarb/status` → `verified:true`, `download_performed=false`;
+  legacy `mouth_animation_mvp` сохранён по умолчанию; UI — блок «Viseme-кадры».
+  Живая проверка GNS-05: набор `viseme_*` полный — `closed` (`45b18de9…`),
+  `small_open` (`5079c1a1…`), `medium_open` (`a8776b02…`), `wide_open` (`4ea7c491…`),
+  `rounded` (`80f55dc9…`), все 960×960, approved человеком; источник набора —
+  `closed.png`, калибровка `81be7403…`; отчёт набора `ready=true`, `blockers=[]`,
+  `outside_ratio_max=0.0`, `flicker_ratio=0.0`, артикуляция 12.6–18.6 %, preview
+  1976×356. `docs/cats/mid-open.png` и `open.png` не годятся (19.7 % отличий вне морды
+  между собой, 34.7 % против `closed`) и не импортированы. Rhubarb дал 82 виземных
+  интервала на записи 11.86 с; сборка B — attempt `3eb3ca9f…`, artifact `a5326a3f…`,
+  960×960, 285 кадров, 11.875 с, `timing_source='rhubarb'`; A/B против
+  `3324624c…` (`pillow_mouth_v2`) проведён, результат не утверждён (у B видна
+  прямоугольная граница патча — освещение viseme-кадров отличается от `closed.png`).
+  Решение — `docs/DECISIONS.md` §4.21; отчёт — `docs/REPORTS/WP_VOICE_06_REPORT.md`
+  (§10, §12, §19). Миграций нет.
+- Тесты: legacy — 15 passed; backend — 298 passed; `tests/test_ltx_worker.py` — 39 passed;
+  `tests/test_thermal_gate.py` — 38 passed; `tests/test_ltx_adapter.py` — 12 passed;
+  `tests/test_mouth_animation.py` — 15 passed; `tests/test_viseme_blend.py` — 26 passed;
+  корневой `python -m pytest tests` — 104 passed;
+  `alembic check` — no new operations (после `0011_mouth_calibrations`); UI — `npm run build`.

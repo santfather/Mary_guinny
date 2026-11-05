@@ -62,15 +62,17 @@ GPU/TTS-прогоны выполняются только с разрешени
    `~/.mary-studio/thermal-events.jsonl`.
 2. Реальная Thermal Pause: отключить питание в середине прогона — ожидается `SeriesRun.status='paused'`,
    отсутствие второго `/prompt` в ComfyUI, автоматический `resume` после возврата сети.
-3. Панель «Термозащита» на `#/series/{id}` в браузере (проверена только сборкой `npm run build`).
+3. Панель «Термозащита» на `#/series/{id}` в браузере — **проверена** в WP-THERMAL-03 на
+   живом backend с временным снимком (`/tmp`, production-файлы не перезаписывались), без
+   GPU-рендера. Осталось проверить её на реальном снимке во время рендера (Q-41).
 
 ## 4. Решено, но не реализовано в коде
 
 | Пункт | Источник решения | Что нужно сделать |
 |---|---|---|
-| T-06: Energy profiles в `RenderSettings` + чтение Low Power Mode | `THERMAL_SAFE_SCHEDULER.md` §12 | Связать профиль Eco/Balanced с параметрами рендера (без изменения production-параметров, Q-33) |
-| T-07: Preview-first (`parameters.preview=true`) | Q-34, §4.16 п.8 | Отдельный `RenderAttempt` с флагом, UI-метка preview, запрет подмены production |
-| Автозапуск воркера через `launchd` | Q-31, §4.16 п.5 | Отдельный этап: plist, логи, поведение при сне/логине |
+| T-06: Energy profiles в `RenderSettings` + чтение Low Power Mode | `THERMAL_SAFE_SCHEDULER.md` §12 | **Реализовано в WP-THERMAL-03** (§4.17 п.1–2); осталось: `low_ram` (Q-38) и профиль `Performance` |
+| T-07: Preview-first (`parameters.preview=true`) | Q-34, §4.16 п.8 | **Реализовано в WP-THERMAL-03** (§4.17 п.5–6): 73 кадра, approve → 409, UI-метка |
+| Автозапуск воркера через `launchd` | Q-31, §4.16 п.5 | Отдельный этап: предложение в `docs/REPORTS/WP_THERMAL_03_REPORT.md` §9; ничего не установлено |
 | Смена Energy Profile из UI | Q-32 | Потребует write-API и хранения настройки (сейчас только CLI/env) |
 | Включение `low_ram` в Eco | Q-33 | Только после теста Q-38 |
 | Движок lip sync / TTS | Q-01…Q-03, Phase D | После выбора MLX-модели: лицензия весов, согласие на голос, замер памяти на 18 ГиБ; UI-форма D4 за флагом |
@@ -87,16 +89,16 @@ GPU/TTS-прогоны выполняются только с разрешени
 
 | Документ | Проблема |
 |---|---|
-| `docs/DECISIONS.md` §7 «отложено до WP» | Таблица устарела: все перечисленные WP закрыты; актуальный реестр — `docs/OPEN_QUESTIONS.md` |
-| `docs/ROADMAP_MARY_STUDIO.md` §6 | Хвост roadmap описывает стартовый порядок WP-00…WP-11 и не отражает WP-M*/WP-THERMAL-* |
-| `docs/PROPOSALS/MAESTRO_INTEGRATION_ROADMAP.md` §6 п.6 | Критерии приёмки ссылаются на старые числа тестов (backend 158, корень 43); сейчас 239 и 95 |
-| `docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md` §13 п.7 | Тот же устаревший ориентир (backend 231, корень 57) |
-| `docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md` §12 | T-02…T-05, T-08, T-09 выполнены; T-06, T-07 — нет (отметить статусы) |
+| `docs/DECISIONS.md` §7 «отложено до WP» | Обновлён в WP-THERMAL-03: preview-first и `launchd`-строки приведены к факту; актуальный реестр — `docs/OPEN_QUESTIONS.md` |
+| `docs/ROADMAP_MARY_STUDIO.md` §6 | Обновлён в WP-THERMAL-03: вместо старого порядка WP-00…WP-11 — фактическая таблица статусов WP-M*/WP-THERMAL-* |
+| `docs/PROPOSALS/MAESTRO_INTEGRATION_ROADMAP.md` §6 п.6 | Остаётся устаревший ориентир (backend 158, корень 43); факт на 2026-11-04 — 245 и 104 |
+| `docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md` §13 п.7 | Обновлён в WP-THERMAL-03: backend 245, корень 104 |
+| `docs/PROPOSALS/THERMAL_SAFE_SCHEDULER.md` §12 | Обновлён в WP-THERMAL-03: T-02…T-09 отмечены как выполненные (T-06/T-07 — WP-THERMAL-03) |
 
 ## 6. Гигиена репозитория
 
-- Каталог `export/` (≈241 МБ готовых MP4) не отслеживается и **не покрыт** `.gitignore`
-  (там правило `exports/*`); риск случайного коммита.
+- Каталог `export/` (≈241 МБ готовых MP4) **добавлен в `.gitignore`** в WP-THERMAL-03;
+  файлы не удалялись и не перемещались, в индексе MP4 нет.
 - Рабочее дерево содержит изменения нескольких WP одним пакетом — история по WP-M1…M8
   и WP-THERMAL-02 появится только текущим коммитом.
 - `runtime/` с копией ComfyUI исключён из Git — при переносе машины его нужно ставить заново.

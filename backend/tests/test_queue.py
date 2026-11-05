@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 import struct
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, event, text
 
 from app.video_probe import VideoProbeError, probe_mp4
+
+PREVIEW_FRAMES = 73
 
 
 def _box(box_type: bytes, payload: bytes) -> bytes:
@@ -768,3 +772,221 @@ def test_claim_guard_ignores_postprocess_and_expired_leases(
     )
     assert claimed.status_code == 200
     assert claimed.json()["job_id"] == str(postprocess)
+
+
+# --- WP-THERMAL-03: preview-first, guard-атомарность --------------------
+
+
+def _finish_video_job(
+    api_client,
+    job_id,
+    *,
+    worker_name: str = "worker-a",
+    parameters: dict[str, object] | None = None,
+) -> tuple[str, str]:
+    """Загружает валидный MP4 и завершает job: возвращает (artifact_id, attempt_id)."""
+
+    video = make_mp4(duration_ms=1000)
+    url = f"/api/worker/jobs/{job_id}/artifacts?worker_name={worker_name}&kind=video"
+    upload = api_client.post(
+        url,
+        content=video,
+        headers={
+            **_token(api_client),
+            "Content-Type": "video/mp4",
+            "X-Content-SHA256": hashlib.sha256(video).hexdigest(),
+        },
+    )
+    assert upload.status_code == 201
+    complete = api_client.post(
+        f"/api/worker/jobs/{job_id}/complete",
+        json={
+            "worker_name": worker_name,
+            "duration_s": 1.0,
+            "native_fps": 24,
+            "parameters": parameters or {},
+        },
+        headers=_token(api_client),
+    )
+    assert complete.status_code == 200
+    return upload.json()["id"], complete.json()["attempt_id"]
+
+
+@contextmanager
+def _capture_statements(conn: Connection) -> Iterator[list[str]]:
+    """Записывает SQL, который реально уходит в БД внутри блока."""
+
+    statements: list[str] = []
+
+    def _record(
+        cursor_conn, cursor, statement, parameters, context, executemany
+    ) -> None:  # noqa: ANN001 - сигнатура SQLAlchemy
+        statements.append(statement)
+
+    event.listen(conn, "before_cursor_execute", _record)
+    try:
+        yield statements
+    finally:
+        event.remove(conn, "before_cursor_execute", _record)
+
+
+def test_preview_render_is_separate_short_attempt(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """T-07: preview — отдельная короткая попытка, production-шот не меняется."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    conn.execute(
+        text(
+            "UPDATE shots SET target_duration_frames = 193, timeline_fps = 24"
+            " WHERE id = :id"
+        ),
+        {"id": shot_id},
+    )
+    _freeze_other_jobs(conn)
+
+    queued = api_client.post(f"/api/shots/{shot_id}/render", json={"preview": True})
+    assert queued.status_code == 202
+    assert queued.json()["preview"] is True
+    job_id = queued.json()["job_id"]
+    payload = conn.execute(
+        text("SELECT payload FROM jobs WHERE id = :id"), {"id": job_id}
+    ).scalar()
+    assert payload["preview"] is True
+    assert payload["frames"] == PREVIEW_FRAMES
+
+    claimed = _queue_claim(api_client, "worker-a")
+    assert claimed["job_id"] == str(job_id)
+    assert claimed["inputs"]["frames"] == PREVIEW_FRAMES
+    assert claimed["inputs"]["preview"] is True
+
+    _, attempt_id = _finish_video_job(
+        api_client,
+        job_id,
+        parameters={"num_frames": PREVIEW_FRAMES, "preview": True},
+    )
+    attempt_parameters = conn.execute(
+        text("SELECT parameters FROM render_attempts WHERE id = :id"),
+        {"id": attempt_id},
+    ).scalar()
+    assert attempt_parameters["preview"] is True
+
+    approve = api_client.post(f"/api/shots/{shot_id}/attempts/{attempt_id}/approve")
+    assert approve.status_code == 409
+    assert approve.json()["detail"]["error"] == "preview_cannot_be_approved"
+
+    shot = api_client.get(f"/api/shots/{shot_id}").json()
+    assert shot["approved_attempt_id"] is None
+    assert shot["status"] != "approved"
+    assert shot["target_duration_frames"] == 193
+    assert shot["timeline_fps"] == 24.0
+
+    rejected = api_client.post(f"/api/shots/{shot_id}/attempts/{attempt_id}/reject")
+    assert rejected.status_code == 200
+
+    # Production идёт отдельной job с полными 193 кадрами и без флага preview.
+    production = _queue(api_client, shot_id)
+    assert production["preview"] is False
+    claimed = _queue_claim(api_client, "worker-a")
+    assert claimed["job_id"] == str(production["job_id"])
+    assert claimed["inputs"]["frames"] == 193
+    assert "preview" not in claimed["inputs"]
+
+
+def test_done_preview_does_not_block_production_approval(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """Утверждённой остаётся production-попытка, preview в истории — отдельно."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    _freeze_other_jobs(conn)
+
+    preview_job = api_client.post(
+        f"/api/shots/{shot_id}/render", json={"preview": True}
+    ).json()["job_id"]
+    _queue_claim(api_client, "worker-a")
+    _, preview_attempt = _finish_video_job(
+        api_client, preview_job, parameters={"preview": True, "num_frames": PREVIEW_FRAMES}
+    )
+
+    production_job = _queue(api_client, shot_id)["job_id"]
+    _queue_claim(api_client, "worker-a")
+    _, production_attempt = _finish_video_job(
+        api_client, production_job, parameters={"num_frames": 193}
+    )
+
+    approved = api_client.post(
+        f"/api/shots/{shot_id}/attempts/{production_attempt}/approve"
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approved_attempt_id"] == production_attempt
+
+    detail = api_client.get(f"/api/shots/{shot_id}").json()
+    attempts = {item["id"]: item for item in detail["attempts"]}
+    assert attempts[production_attempt]["render_parameters"] == {"num_frames": 193}
+    assert attempts[preview_attempt]["render_parameters"]["preview"] is True
+
+
+def test_claim_takes_advisory_guard_before_claim_sql(
+    api_client,
+    conn: Connection,
+    project_id,
+    shot_id,
+    character_id,
+    location_id,
+    make_png_reference,
+) -> None:
+    """Guard и claim — одна транзакция: между ними нет commit/release."""
+
+    _approve_keyframe(
+        api_client, project_id, shot_id, character_id, location_id, make_png_reference
+    )
+    _freeze_other_jobs(conn)
+    _queue(api_client, shot_id)
+
+    with _capture_statements(conn) as statements:
+        _queue_claim(api_client, "worker-a")
+
+    lock_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if "pg_advisory_xact_lock" in statement
+    )
+    claim_index = next(
+        index for index, statement in enumerate(statements) if "WITH next AS" in statement
+    )
+    assert lock_index < claim_index
+    between = " ".join(statements[lock_index:claim_index]).upper()
+    assert "COMMIT" not in between
+    assert "RELEASE SAVEPOINT" not in between
+
+
+def test_claim_guard_is_skipped_for_non_render_kinds(
+    api_client, conn: Connection
+) -> None:
+    """Не-GPU claim не берёт глобальную блокировку рендера."""
+
+    with _capture_statements(conn) as statements:
+        response = api_client.post(
+            "/api/worker/claim",
+            json={"worker_name": "worker-p", "kinds": ["postprocess"]},
+            headers=_token(api_client),
+        )
+    assert response.status_code == 200
+    assert not any("pg_advisory_xact_lock" in s for s in statements)

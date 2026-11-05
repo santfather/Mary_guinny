@@ -13,8 +13,14 @@ export const PARAMETER_KEYS = [
   "shot_key",
 ];
 
+// WP-THERMAL-03 (T-07): preview-попытка — не финальный ролик.
+export function isPreviewAttempt(attempt: Attempt): boolean {
+  return attempt.render_parameters?.preview === true;
+}
+
 export function attemptMeta(attempt: Attempt): { summary: string[]; parameters: string[] } {
   const summary: string[] = [];
+  if (isPreviewAttempt(attempt)) summary.push("preview");
   if (attempt.seed !== null) summary.push(`seed ${attempt.seed}`);
   if (attempt.duration_s !== null) summary.push(`${attempt.duration_s.toFixed(2)} с`);
   if (attempt.workflow_version !== null) {

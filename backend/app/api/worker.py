@@ -218,6 +218,10 @@ def _job_inputs(session: Session, job: Job) -> dict[str, object]:
         or 24,
         "seed": payload.get("seed"),
     }
+    # WP-THERMAL-03 (T-07): признак preview доезжает до воркера и попадает в
+    # `render_attempts.parameters.preview`.
+    if payload.get("preview"):
+        inputs["preview"] = True
     if payload.get("prompt") is not None:
         inputs["prompt"] = payload["prompt"]
     elif job.shot_id is not None:
@@ -374,6 +378,14 @@ def claim(
             status_code=409, detail="only shot jobs are supported by the worker API"
         )
 
+    attempt_parameters: dict[str, object] = {
+        "worker_name": payload.worker_name,
+        "job_attempt": job.attempts,
+    }
+    if (job.payload or {}).get("preview"):
+        # Preview фиксируется уже на claim: статус попытки не должен зависеть от
+        # того, что воркер пришлёт в `complete`.
+        attempt_parameters["preview"] = True
     attempt = RenderAttempt(
         shot_id=job.shot_id,
         job_id=job.id,
@@ -385,7 +397,7 @@ def claim(
             if job.payload and job.payload.get("start_keyframe_artifact_id")
             else None
         ),
-        parameters={"worker_name": payload.worker_name, "job_attempt": job.attempts},
+        parameters=attempt_parameters,
     )
     session.add(attempt)
     session.flush()

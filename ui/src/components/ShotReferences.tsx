@@ -48,11 +48,22 @@ export function ShotReferences({ shotId, links, assets, onChanged }: ShotReferen
         <ul className="list">
           {links.map((link) => (
             <li key={link.id} className="list__item">
-              <img
-                className="thumb"
-                src={link.reference.content_url}
-                alt={`Референс ${link.reference.sha256.slice(0, 8)}`}
-              />
+              {/* WP-VOICE-02: аудио-референс (role='shot_audio') — не картинка. */}
+              {link.reference.mime_type !== null &&
+              link.reference.mime_type.startsWith("audio/") ? (
+                <audio
+                  className="audio-inline"
+                  controls
+                  preload="metadata"
+                  src={link.reference.content_url}
+                />
+              ) : (
+                <img
+                  className="thumb"
+                  src={link.reference.content_url}
+                  alt={`Референс ${link.reference.sha256.slice(0, 8)}`}
+                />
+              )}
               <div className="list__main">
                 <div className="list__meta">
                   <strong>{purposeLabel(link.purpose)}</strong>
